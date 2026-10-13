@@ -1,0 +1,176 @@
+name: 描画パターン確認用：備品・サービス購買フロー
+owner: サンプル
+description: 直進・折れ線・列飛ばし・上下の頂点からの分岐・差し戻し（同じ担当／別の担当）・自分へ戻る・並行処理と合流・長い条件ラベル・複数の終了を一通り含むサンプル
+lanes:
+  - id: applicant
+    name: 申請者
+  - id: manager
+    name: 上長
+  - id: purchasing
+    name: 購買
+  - id: legal
+    name: 法務
+  - id: vendor
+    name: 取引先
+  - id: accounting
+    name: 経理
+steps:
+  - id: a1
+    type: start
+    lane: applicant
+    label: 購入の必要が発生
+    next: a2
+  - id: a2
+    type: task
+    lane: applicant
+    label: 申請内容を作成
+    next: a3
+  - id: a3
+    type: system
+    lane: applicant
+    label: 購買システムに申請登録
+    note: 別の担当へ折れて進む矢印（elbow）
+    next: b1
+  - id: b1
+    type: task
+    lane: manager
+    label: 申請内容を確認
+    next: b2
+  - id: b2
+    type: decision
+    lane: manager
+    label: 承認するか
+    note: 3方向の分岐。差し戻しは別の担当へ戻る矢印、却下は上の担当へ跳ぶ矢印
+    next:
+      - to: p1
+        when: 承認
+      - to: a2
+        when: 差し戻し
+      - to: a9
+        when: 却下
+  - id: a9
+    type: end
+    lane: applicant
+    label: 却下を受領して終了
+  - id: p1
+    type: decision
+    lane: purchasing
+    label: 契約金額は100万円を超えるか
+    next:
+      - to: l1
+        when: 超える
+      - to: p2
+        when: 超えない
+  - id: l1
+    type: task
+    lane: legal
+    label: 契約書の内容を審査
+    next: l2
+  - id: l2
+    type: decision
+    lane: legal
+    label: 契約上の問題はないか
+    note: 同じ担当の中で列を飛ばす矢印（問題なし）と、同じ担当内の差し戻し（修正が必要）
+    next:
+      - to: l3
+        when: 修正が必要
+      - to: p3
+        when: 問題なし
+  - id: l3
+    type: task
+    lane: legal
+    label: 修正案を作成
+    next: l1
+  - id: p2
+    type: task
+    lane: purchasing
+    label: 取引先へ見積を依頼
+    next: v1
+  - id: v1
+    type: document
+    lane: vendor
+    label: 見積書を提出
+    next: p3
+  - id: p3
+    type: decision
+    lane: purchasing
+    label: 発注方法を選択
+    note: 条件ラベルが長い場合は図では省略され、ホバーで全文を表示
+    next:
+      - to: p4
+        when: 通常発注
+      - to: p5
+        when: 納期が迫っているため、取引先へ電話で在庫と納期を直接確認して手配する場合
+  - id: p5
+    type: task
+    lane: purchasing
+    label: 電話で在庫・納期を確認
+    note: 自分へ戻る矢印（つながらない場合は再度かける）
+    next:
+      - to: p5
+        when: つながらない
+      - to: p4
+        when: 確認できた
+  - id: p4
+    type: document
+    lane: purchasing
+    label: 発注書を発行
+    note: 並行処理の開始（取引先と経理へ同時に進む）
+    next: [v2, k1]
+  - id: v2
+    type: task
+    lane: vendor
+    label: 出荷準備・納品
+    next: p6
+  - id: k1
+    type: system
+    lane: accounting
+    label: 予算を引き当て
+    next: k3
+  - id: p6
+    type: task
+    lane: purchasing
+    label: 納品物を検収
+    next: p7
+  - id: p7
+    type: decision
+    lane: purchasing
+    label: 検収結果は合格か
+    next:
+      - to: k3
+        when: 合格
+      - to: v2
+        when: 不合格（再納品）
+  - id: k3
+    type: document
+    lane: accounting
+    label: 請求書を受領・照合
+    note: 並行処理の合流（予算引当と検収の両方を待つ）
+    next: k4
+  - id: k4
+    type: decision
+    lane: accounting
+    label: 請求金額は発注と一致するか
+    next:
+      - to: k5
+        when: 一致
+      - to: v3
+        when: 不一致
+  - id: v3
+    type: document
+    lane: vendor
+    label: 請求書を再発行
+    next: k3
+  - id: k5
+    type: system
+    lane: accounting
+    label: 支払いを実行
+    next: [e1, e2]
+  - id: e1
+    type: end
+    lane: applicant
+    label: 完了通知を受領
+  - id: e2
+    type: end
+    lane: accounting
+    label: 仕訳を計上して終了
