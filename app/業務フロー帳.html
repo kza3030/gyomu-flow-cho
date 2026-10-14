@@ -323,7 +323,7 @@ textarea.inp.issue-inp{border-left:3px solid var(--bad)}
         <button class="btn ghost sm" data-new="order">受注〜出荷・請求</button>
         <p class="store-note" id="storeNote"></p>
         <!-- アプリのバージョン。修正のたびに更新する（ルールは AGENTS.md） -->
-        <p class="ver" title="業務フロー帳のバージョン">業務フロー帳 v1.1.1</p>
+        <p class="ver" title="業務フロー帳のバージョン">業務フロー帳 v1.4.1</p>
       </div>
     </aside>
     <div class="splitter" id="splitSide" role="separator" aria-orientation="vertical" aria-label="フロー一覧の幅（ダブルクリックで元に戻す）" title="ドラッグで幅を変更・ダブルクリックで元に戻す" tabindex="0"></div>
@@ -686,6 +686,12 @@ function edgeLabel(t){
 const labelCut = t => !!t && edgeLabel(t).lines.join("") !== t;
 const CUT_TIP = "長いため図では省略されます（全文は矢印のラベルにマウスを乗せると表示）";
 const markCut = el => { const c = labelCut(el.value); el.classList.toggle("cut", c); el.title = c ? CUT_TIP : ""; };
+// ほかのステップと矢印でつながっているステップの id（自分へ戻る矢印・つなぎ先のない矢印は数えない）
+function linkedIds(f){
+  const ids = new Set(f.steps.map(s => s.id)), on = new Set();
+  f.steps.forEach(s => s.next.forEach(e => { if (e.to !== s.id && ids.has(e.to)){ on.add(s.id); on.add(e.to); } }));
+  return on;
+}
 function layout(f){
   const lanes = f.lanes.slice();
   const laneIdx = new Map(lanes.map((l, i) => [l.id, i]));
@@ -971,7 +977,7 @@ function layout(f){
   edges.forEach(E => { const [x, y] = E.pts[E.pts.length - 1]; obst.push({ x1: x - 8, y1: y - 8, x2: x + 8, y2: y + 8, wt: 2 }); });
   edges.forEach(E => { if (E.label){ E.lp = placeLabel(E.pts, E.label, obst); obst.push({ x1: E.lp[0] - E.label.w / 2 - 3, y1: E.lp[1] - E.label.h / 2 - 3, x2: E.lp[0] + E.label.w / 2 + 3, y2: E.lp[1] + E.label.h / 2 + 3, wt: 3 }); } });
 
-  return { lanes, steps, pos, edges, colX, width: colX[maxCol] + G.nodeW + G.pad, height: Math.max(1, lanes.length) * G.laneH };
+  return { lanes, steps, pos, edges, colX, linked: linkedIds(f), width: colX[maxCol] + G.nodeW + G.pad, height: Math.max(1, lanes.length) * G.laneH };
 }
 const DB_RY = 8; // データ（円柱）の上下の楕円の縦の半径
 const topY = (st, p) => p.y + (st.type === "decision" ? -6 : (st.type === "start" || st.type === "end") ? 6 : 0);
@@ -1112,13 +1118,19 @@ function renderSvg(f, issues, selected, selEdge){
     lines.forEach((ln, k) => { s += `<text x="${x}" y="${y - (lines.length - 1) * LB.lineH / 2 + k * LB.lineH + 1}" text-anchor="middle" dominant-baseline="middle" font-size="${LB.font}" fill="var(--ink)">${esc(ln)}</text>`; });
     s += `</g>`;
   });
-  // 選択中のステップの右・下に「＋」。右は同じ担当、下は1つ下のレーンの担当で次のステップを作る（ドラッグでつなぐ）
+  // 選択中のステップの上下左右に「＋」。右は同じ担当、上・下は1つ上・下のレーンの担当で次のステップを作る（ドラッグでつなぐ）。
+  // 左は同じ担当で前のステップを作る（ドラッグで別のステップからつなぐ）
   const ss = selected && L.steps.find(x => x.id === selected);
-  if (ss && ss.type !== "end"){
-    const p = L.pos.get(ss.id), li = f.lanes.findIndex(l => l.id === ss.lane), below = li >= 0 ? f.lanes[li + 1] : null;
+  if (ss){
+    const p = L.pos.get(ss.id), li = f.lanes.findIndex(l => l.id === ss.lane), above = li > 0 ? f.lanes[li - 1] : null, below = li >= 0 ? f.lanes[li + 1] : null;
     const handle = (side, x, y, tip) => `<g class="handle" data-handle="${side}" data-x="${x}" data-y="${y}" tabindex="0" role="button" aria-label="${esc(tip)}"><title>${esc(tip)}</title><circle cx="${x}" cy="${y}" r="9"/><path d="M${x - 4} ${y}h8M${x} ${y - 4}v8"/></g>`;
-    s += handle("R", p.x + p.w + 22, p.y + p.h / 2, `次のステップを追加（${li >= 0 ? f.lanes[li].name : "同じ担当"}）・ドラッグで別のステップにつなぐ`);
-    if (below) s += handle("B", p.x + p.w / 2, p.y + p.h + 22, `次のステップを「${below.name}」に追加・ドラッグで別のステップにつなぐ`);
+    const own = li >= 0 ? f.lanes[li].name : "同じ担当";
+    if (ss.type !== "start") s += handle("L", Math.max(p.x - 22, G.label + 11), p.y + p.h / 2, `前のステップを追加（${own}）・ドラッグで別のステップからつなぐ`);
+    if (ss.type !== "end"){
+      s += handle("R", p.x + p.w + 22, p.y + p.h / 2, `次のステップを追加（${own}）・ドラッグで別のステップにつなぐ`);
+      if (above) s += handle("T", p.x + p.w / 2, p.y - 22, `次のステップを「${above.name}」に追加・ドラッグで別のステップにつなぐ`);
+      if (below) s += handle("B", p.x + p.w / 2, p.y + p.h + 22, `次のステップを「${below.name}」に追加・ドラッグで別のステップにつなぐ`);
+    }
   }
   // 選択中の矢印の両端に丸。ドラッグでつなぎ替え・出入りする辺の指定
   const SE = L.edges.find(isSelEdge);
@@ -1527,6 +1539,7 @@ function commit(opts = {}){
   // opts.form: 構造の変更（フォームを描き直し、元に戻すの 1 回分にする）/ opts.select: 変更後に選ぶステップ
   // 読み取れない YAML のフローは、元の文面を上書きしないよう図やフォームからは変えない
   if (broken){ open(currentId, true); toast("YAML タブで読み取れない箇所を直してから編集してください"); return; }
+  keepUnlinked();
   const text = toYaml(flow);
   if (text !== yamlSrc) pushUndo(opts.form ? "op" : "type");
   yamlSrc = text;
@@ -1535,6 +1548,16 @@ function commit(opts = {}){
   if (document.activeElement !== $("#yamlText")) { $("#yamlText").value = yamlSrc; setYamlMsg(); }
   refresh(opts.form);
   markDirty();
+}
+/* 矢印がすべて外れたステップは、自動の配置だと左端へ詰められて見失いやすい。
+   直前の図で置かれていた列に固定（col）して、その場に留める */
+function keepUnlinked(){
+  if (!lastL?.linked) return;
+  const now = linkedIds(flow);
+  const lost = flow.steps.filter(s => !s.col && lastL.linked.has(s.id) && !now.has(s.id) && lastL.pos.has(s.id));
+  if (!lost.length) return;
+  const pos = layout(flow).pos;
+  lost.forEach(s => { const c = lastL.pos.get(s.id).c; if (pos.get(s.id)?.c !== c) s.col = c + 1; });
 }
 function refresh(withForm){
   issues = validate(flow);
@@ -1563,7 +1586,7 @@ function updateHint(){
   h.innerHTML = selEdge
     ? `両端の丸をドラッグしてつなぎ替え（ステップの辺の近くで離すとその辺から出入り・真ん中で離すと自動に戻す）・ダブルクリックで条件を編集・<kbd>Delete</kbd> で矢印を削除・<kbd>Esc</kbd> で選択を外す`
     : selected
-    ? `<b>＋</b> で次のステップを追加（ドラッグで別のステップにつなぐ）・ドラッグで左右の列・担当を変更（<kbd>Shift</kbd>+矢印キーでも）・<kbd>Enter</kbd> で文言を編集・<kbd>Delete</kbd> で削除・<kbd>Ctrl</kbd>+<kbd>Z</kbd> で元に戻す`
+    ? `<b>＋</b> で次のステップ（左は前のステップ）を追加（ドラッグで別のステップとつなぐ）・ドラッグで左右の列・担当を変更（<kbd>Shift</kbd>+矢印キーでも）・<kbd>Enter</kbd> で文言を編集・<kbd>Delete</kbd> で削除・<kbd>Ctrl</kbd>+<kbd>Z</kbd> で元に戻す`
     : `ステップをクリックで選択・ダブルクリックで文言を編集・矢印をクリックで選択（端をドラッグでつなぎ替え）・矢印や条件をダブルクリックで条件を編集・ステップをドラッグで左右の列・担当を変更`;
 }
 // 選択したステップが画面の外なら、見える位置までスクロールする（左のレーン名の列は避ける）
@@ -2065,16 +2088,42 @@ function addNext(srcId, laneId, branch){
   flow.steps.splice(flow.steps.indexOf(s) + 1, 0, ns);
   commit({ form: true, select: id }); scrollCard(id); editStepInline(id);
 }
+/* 前のステップを作って dstId へつなぐ。branch 指定がなければ、dstId へ来ていた矢印（差し戻しを除く）を
+   新しいステップへ付け替えて間に挟む */
+function addPrev(dstId, laneId, branch){
+  const t = flow.steps.find(x => x.id === dstId); if (!t) return;
+  const id = newStepId(), ns = { id, type: "task", lane: laneId, label: "", note: "", issue: "", next: [{ to: dstId, when: "" }] };
+  if (!branch) layout(flow).edges.forEach(E => { if (E.t === t && !E.back) E.e.to = id; });
+  flow.steps.splice(flow.steps.indexOf(t), 0, ns);
+  commit({ form: true, select: id }); scrollCard(id); editStepInline(id);
+}
 function plus(side){
   const s = curStep(); if (!s) return;
+  if (side === "L") return addPrev(s.id, s.lane);
   if (side === "R") return addNext(s.id, s.lane);
-  const i = flow.lanes.findIndex(l => l.id === s.lane);
-  if (i >= 0 && flow.lanes[i + 1]) addNext(s.id, flow.lanes[i + 1].id);
+  const i = flow.lanes.findIndex(l => l.id === s.lane), l = i >= 0 && flow.lanes[i + (side === "T" ? -1 : 1)];
+  if (l) addNext(s.id, l.id);
 }
-function connect(a, b){
+/* 差し戻しになる矢印は、自動の経路（下や左から回り込む）だとつないだ向きと離れて見えるので、
+   2つのステップのいちばん近い辺どうしを出る辺・入る辺に指定する（気に入らなければ端をドラッグしてつなぎ替えられる）。
+   すでにほかの矢印が出入りしている辺は避け、空いている辺の中でいちばん近いものを選ぶ（全部ふさがっていれば近さだけで選ぶ）。
+   used は、この矢印を足す前の図で矢印が出入りしている辺（ステップID + 辺）。
+   fix で辺を決めた側（ドラッグを始めた＋の辺。{ exit } か { entry }）は、ふさがっていてもその辺を使う */
+function pinNearest(e, used, fix = {}){
+  const E = layout(flow).edges.find(E => E.e === e); if (!E || E.kind !== "loop") return;
+  let best = Infinity;
+  for (const so of fix.exit || "TBLR") for (const ti of fix.entry || "TBLR"){
+    const [x1, y1] = portAt(E.s, E.a, so), [x2, y2] = portAt(E.t, E.b, ti);
+    const d = Math.hypot(x2 - x1, y2 - y1) + (used.has(E.s.id + so) ? 1e5 : 0) + (used.has(E.t.id + ti) ? 1e5 : 0);
+    if (d < best){ best = d; e.exit = so; e.entry = ti; }
+  }
+}
+// 図の上で矢印が出入りしている辺（ステップID + 辺）。自分へ戻る矢印は上の辺を使う
+const usedSides = L => new Set(L.edges.flatMap(E => E.kind === "self" ? [E.s.id + "T"] : [E.s.id + E.so, E.t.id + E.ti]));
+function connect(a, b, fix){
   const s = flow.steps.find(x => x.id === a), t = flow.steps.find(x => x.id === b); if (!s || !t || a === b){ drawCanvas(); return; }
   if (s.next.some(e => e.to === b)){ toast("すでにつながっています"); drawCanvas(); return; }
-  s.next.push({ to: b, when: "" }); commit({ form: true });
+  const used = usedSides(layout(flow)), e = { to: b, when: "" }; s.next.push(e); pinNearest(e, used, fix); commit({ form: true });
   toast(`「${s.label || a}」から「${t.label || b}」へつなぎました`);
   if (s.type === "decision") editEdgeInline(a, s.next.length - 1);
 }
@@ -2114,7 +2163,7 @@ function reattach(ref, end, id, side){
   toast(`「${name(e.to)}」への矢印を「${name(id)}」から出すように変えました`);
 }
 
-/* ドラッグ：＋からは「つなぐ」（ステップの上で離すと接続、空いたところで離すとそこに新しいステップ）。
+/* ドラッグ：＋からは「つなぐ」（ステップの上で離すと接続、空いたところで離すとそこに新しいステップ。左の＋は向きが逆）。
    ステップ本体は左右に動かすと列が、別のレーンへ動かすと担当が変わる */
 let drag = null;
 const inCanvas = ev => { const r = $("#canvas").getBoundingClientRect(); return ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom; };
@@ -2170,7 +2219,9 @@ $("#canvas").addEventListener("pointermove", ev => {
     const sv = mainSvg(), tgt = targetAt(ev, drag.id), gh = sv.querySelector(".drop-ghost");
     sv.querySelectorAll(".link-target").forEach(n => n.classList.remove("link-target"));
     if (tgt) nodeEl(tgt).classList.add("link-target");
-    sv.querySelector(".link-temp").setAttribute("d", `M${drag.from[0]} ${drag.from[1]} L${p[0]} ${p[1]}`);
+    // 左の＋（前のステップ）からは、離した先から選択中のステップへ向かう矢印
+    const [a, b] = drag.side === "L" ? [p, drag.from] : [drag.from, p];
+    sv.querySelector(".link-temp").setAttribute("d", `M${a[0]} ${a[1]} L${b[0]} ${b[1]}`);
     const empty = !tgt && lane;
     gh.setAttribute("visibility", empty ? "visible" : "hidden");
     if (empty){ gh.setAttribute("x", p[0] - G.nodeW / 2); gh.setAttribute("y", lastL.lanes.indexOf(lane) * G.laneH + (G.laneH - G.nodeH) / 2); }
@@ -2196,8 +2247,10 @@ function endDrag(ev, cancel){
   if (d.reattach){ const hit = p && reattachAt(ev, p, d); if (hit) reattach(d.edge, d.reattach, hit.id, hit.side); else drawCanvas(); return; }
   if (d.link){
     const tgt = p && targetAt(ev, d.id);
-    if (tgt) connect(d.id, tgt);
-    else if (lane) addNext(d.id, lane.id, true);
+    const prev = d.side === "L";
+    // 差し戻しになるときは、ドラッグを始めた＋の辺から線を出す（左の＋は選択中のステップの左の辺へ入れる）
+    if (tgt) prev ? connect(tgt, d.id, { entry: "L" }) : connect(d.id, tgt, { exit: d.side });
+    else if (lane) prev ? addPrev(d.id, lane.id, true) : addNext(d.id, lane.id, true);
     else drawCanvas();
     return;
   }
