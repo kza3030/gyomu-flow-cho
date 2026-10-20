@@ -1858,17 +1858,16 @@ function clipAtPage(pts, p, out){
   }
   return null;
 }
-// 色の変数をライトテーマの色に置き換える（CSS の最初の :root の値を使う）
-let exportColors = null;
+/* 色の変数をライトテーマの色に置き換える。CSS のルールは読まない（HTML ファイルを直接開くと、
+   別ファイルの CSS のルールはスクリプトから読めず、すべて黒になってしまうため）。
+   代わりに一瞬だけ data-theme="light" にして、計算済みのスタイルから値を取る（画面を描き直す前に元に戻すので、見た目は変わらない） */
 function resolveVars(svg){
-  if (!exportColors){
-    exportColors = {};
-    outer: for (const sh of document.styleSheets){
-      let rules; try { rules = sh.cssRules; } catch { continue; } // 外部のフォントの CSS は読めない
-      for (const r of rules) if (r.selectorText === ":root"){ for (const k of r.style) if (k.startsWith("--")) exportColors[k] = r.style.getPropertyValue(k).trim(); break outer; }
-    }
-  }
-  return svg.replace(/var\((--[\w-]+)\)/g, (m, k) => exportColors[k] || "#000");
+  const root = document.documentElement, prev = root.getAttribute("data-theme"), got = {};
+  root.setAttribute("data-theme", "light");
+  const cs = getComputedStyle(root);
+  const out = svg.replace(/var\((--[\w-]+)\)/g, (m, k) => got[k] || (got[k] = cs.getPropertyValue(k).trim() || "#000"));
+  if (prev == null) root.removeAttribute("data-theme"); else root.setAttribute("data-theme", prev);
+  return out;
 }
 // 1 枚分の SVG。o = { title, ids }。i は何枚目か（0 始まり）
 function pageSvg(f, L, P, links, i, o){
