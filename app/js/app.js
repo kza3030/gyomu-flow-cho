@@ -1622,7 +1622,7 @@ function mermaid(f){
 }
 function markdown(f){
   const laneName = id => f.lanes.find(l => l.id === id)?.name || id;
-  const cell = t => String(t || "").replace(/\|/g, "\\|").replace(/\n/g, " ");
+  const cell = t => String(t || "").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\n/g, " ");
   let md = `# ${f.name}\n\n`;
   if (f.owner) md += `- 管理部署：${f.owner}\n`;
   md += `- 最終更新：${fmtTime(Date.now())}\n\n`;
