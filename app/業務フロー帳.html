@@ -7,7 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+JP:wght@400;500;600&family=Zen+Kaku+Gothic+New:wght@700;900&display=swap">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js" integrity="sha512-CSBhVREyzHAjAFfBlIBakjoRUKp5h7VSweP0InR/pAJyptH7peuhCsqAI/snV+TwZmXZqoUklpXp6R6wMnYf5Q==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<!-- YAML の読み取り部品（js-yaml 4.1.1、MIT ライセンス。表記は lib/js-yaml.LICENSE.txt）。外部の配信元からは読み込まない -->
+<script src="lib/js-yaml.min.js"></script>
 <style>
 /* Palette: 藍 (indigo). Layout: drafting-table app — flow list | swimlane sheet | definition panel. Lanes read like a 業務フロー帳票 grid. */
 :root{
@@ -17,6 +18,7 @@
   --dec:#FBF1D6; --dec-line:#A9780F; --sel:#1F6FEB;
   --data:#E3F2EA; --data-line:#2C7647;
   --warn:#A8620C; --bad:#B2352A; --good:#2C7647; --info:#3F6E8C;
+  --issue-bg:#FFF8F7; --issue-line:#E2B5AF;
   --shadow:0 1px 2px rgb(26 34 51 / .06),0 4px 14px rgb(26 34 51 / .06);
   --f-display:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic",sans-serif;
   --f-body:"IBM Plex Sans JP","Hiragino Sans","Yu Gothic",system-ui,sans-serif;
@@ -29,6 +31,7 @@
   --dec:#322A17; --dec-line:#D8A74A; --sel:#5C9DFF;
   --data:#16291F; --data-line:#6FC48D;
   --warn:#E2A24A; --bad:#EE7A69; --good:#6FC48D; --info:#7FB2D3;
+  --issue-bg:#2A1D1F; --issue-line:#7A4038;
   --shadow:0 1px 2px rgb(0 0 0 / .3),0 4px 14px rgb(0 0 0 / .25); color-scheme:dark}}
 :root[data-theme="dark"]{
   --paper:#10141C; --surface:#171D28; --ink:#E2E6EE; --muted:#939BAE; --line:#283041; --line-strong:#3C465C;
@@ -37,6 +40,7 @@
   --dec:#322A17; --dec-line:#D8A74A; --sel:#5C9DFF;
   --data:#16291F; --data-line:#6FC48D;
   --warn:#E2A24A; --bad:#EE7A69; --good:#6FC48D; --info:#7FB2D3;
+  --issue-bg:#2A1D1F; --issue-line:#7A4038;
   --shadow:0 1px 2px rgb(0 0 0 / .3),0 4px 14px rgb(0 0 0 / .25); color-scheme:dark}
 
 html,body{height:100%}
@@ -123,13 +127,22 @@ body.resizing{cursor:col-resize;user-select:none}
 .canvas .diagram svg{display:block;flex:none}
 .canvas .diagram svg.lanes{position:sticky;left:0;z-index:2}
 .canvas svg .node{cursor:pointer}
-.canvas svg .node:hover .shape{stroke:var(--accent);stroke-width:2}
+.canvas svg .node:hover .shape,.canvas svg .node.hv .shape{stroke:var(--accent);stroke-width:2}
 .canvas svg .node:focus{outline:none}
 .canvas svg .node:focus-visible .shape{stroke:var(--sel);stroke-width:2.5}
 /* マウスを乗せた・キーボードで選んだステップや矢印：出入りする矢印と条件ラベルを、選択時より薄めに強調する */
 .canvas svg path.edge.hv:not(.hot){stroke:var(--sel);stroke-opacity:.6;stroke-width:2;marker-end:url(#arrH)}
 .canvas svg .elabel.hv rect{stroke:var(--sel)}
 .canvas .diagram{user-select:none;-webkit-user-select:none}
+/* 課題の吹き出し（「課題を表示」中）。ステップか吹き出しにマウスを乗せると両方を強調し、省いた文は co-pop で全文を出す */
+.canvas svg .callout,.canvas svg .co-pop{cursor:pointer}
+.canvas svg .co-box{fill:var(--issue-bg);stroke:var(--issue-line);stroke-width:1}
+.canvas svg .co-stem{fill:none;stroke:var(--bad);stroke-width:1.6}
+.canvas svg .callout.hv .co-box,.canvas svg .co-pop .co-box{stroke:var(--bad);stroke-width:1.6}
+.canvas svg .callout.hv .co-stem{stroke-width:2.4}
+.canvas svg .co-pop{display:none}
+.canvas svg .co-pop.hv,.canvas svg .co-pop.sel{display:inline}
+.canvas.dragging .co-pop,.canvas.linking .co-pop,.canvas.reattaching .callout,.canvas.reattaching .co-pop{pointer-events:none}
 /* 図の上での編集：＋ハンドル・矢印の当たり判定・ドラッグ中の表示・その場の入力欄 */
 .canvas svg .handle{cursor:crosshair;touch-action:none}
 .canvas svg .handle circle{fill:var(--surface);stroke:var(--sel);stroke-width:1.6}
@@ -148,6 +161,7 @@ body.resizing{cursor:col-resize;user-select:none}
 .canvas svg .lane-hi{fill:var(--sel);fill-opacity:.1;stroke:var(--sel);stroke-width:2;pointer-events:none}
 .canvas svg .link-temp{fill:none;stroke:var(--sel);stroke-width:2;stroke-dasharray:6 4;pointer-events:none}
 .canvas svg .drop-ghost{fill:var(--surface);fill-opacity:.75;stroke:var(--sel);stroke-width:1.5;stroke-dasharray:5 4;pointer-events:none}
+.canvas svg .drop-line{stroke:var(--sel);stroke-width:2.5;stroke-linecap:round;pointer-events:none}
 .canvas.dragging,.canvas.dragging *{cursor:grabbing!important}
 .canvas.linking,.canvas.linking *{cursor:crosshair!important}
 .step-tip{position:fixed;z-index:25;max-width:300px;min-width:160px;background:var(--surface);color:var(--ink);border:1px solid var(--line-strong);border-radius:8px;box-shadow:var(--shadow);padding:8px 11px;font-size:12.5px;line-height:1.6;pointer-events:none;display:grid;gap:7px}
@@ -271,7 +285,10 @@ textarea.inp.issue-inp{border-left:3px solid var(--bad)}
 .body.focus{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
 .body.focus .panel,.body.focus .splitter{display:none}
 @media (min-width:861px){.body.focus .side{display:none}}
-#focusBtn[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+#issueBtn svg{width:14px;height:14px;flex:none}
+#issueBtn .cnt{background:color-mix(in srgb,var(--bad) 14%,transparent);color:var(--bad);border-radius:999px;padding:0 6px;font-size:11px;font-weight:600;line-height:16px;font-variant-numeric:tabular-nums}
+#issueBtn:disabled{opacity:.5;cursor:default}
+#issueBtn[aria-pressed="true"],#focusBtn[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
 @media (prefers-reduced-motion:reduce){.side{transition:none}.splitter::after{transition:none}}
 </style>
 </head>
@@ -323,7 +340,7 @@ textarea.inp.issue-inp{border-left:3px solid var(--bad)}
         <button class="btn ghost sm" data-new="order">受注〜出荷・請求</button>
         <p class="store-note" id="storeNote"></p>
         <!-- アプリのバージョン。修正のたびに更新する（ルールは AGENTS.md） -->
-        <p class="ver" title="業務フロー帳のバージョン">業務フロー帳 v1.4.1</p>
+        <p class="ver" title="業務フロー帳のバージョン">業務フロー帳 v1.6.1</p>
       </div>
     </aside>
     <div class="splitter" id="splitSide" role="separator" aria-orientation="vertical" aria-label="フロー一覧の幅（ダブルクリックで元に戻す）" title="ドラッグで幅を変更・ダブルクリックで元に戻す" tabindex="0"></div>
@@ -354,6 +371,7 @@ textarea.inp.issue-inp{border-left:3px solid var(--bad)}
           <button class="mini" id="zoomIn" aria-label="拡大">＋</button>
           <button class="btn sm ghost" id="zoomFit">全体</button>
         </div>
+        <button class="btn sm" id="issueBtn" aria-pressed="false"><svg viewBox="0 0 14 14" aria-hidden="true"><rect width="14" height="14" rx="3" fill="var(--bad)"/><path d="M7 3.2v4.6" stroke="var(--surface)" stroke-width="2" stroke-linecap="round"/><circle cx="7" cy="10.8" r="1.1" fill="var(--surface)"/></svg>課題を表示<span class="cnt" id="issueBtnCount">0</span></button>
         <button class="btn sm" id="focusBtn" aria-pressed="false" title="フロー一覧と編集エリアを隠して、図を広く表示します">図だけ表示</button>
         <p class="canvas-hint" id="canvasHint" hidden></p>
       </div>
@@ -605,6 +623,8 @@ function normalize(raw){
     const st = { id: String(s.id ?? ("s" + (i + 1))), type: TYPES[s.type] ? s.type : "task", lane: String(s.lane ?? ""), label: String(s.label ?? ""), note: s.note != null ? String(s.note) : "", issue: s.issue != null ? String(s.issue) : "", next: normNext(s.next) };
     // col: 図で左から何列目に置くか（1 始まり）。省くと自動で決める
     if (Number.isInteger(+s.col) && +s.col >= 1) st.col = +s.col;
+    // row: レーンの中で上から何段目に置くか（1 始まり。中身のない段は詰めて描く）。省くと自動で決める
+    if (Number.isInteger(+s.row) && +s.row >= 1) st.row = +s.row;
     f.steps.push(st);
   });
   return f;
@@ -617,6 +637,7 @@ function toPlain(f){
   o.steps = f.steps.map(s => {
     const r = { id: s.id, type: s.type, lane: s.lane };
     if (s.col) r.col = s.col;
+    if (s.row) r.row = s.row;
     r.label = s.label;
     if (s.note) r.note = s.note;
     if (s.issue) r.issue = s.issue;
@@ -683,6 +704,9 @@ function edgeLabel(t){
   const lines = wrapLabel(t, LB.per, LB.max);
   return { t, lines, w: Math.max(...lines.map(textW)) + 12, h: lines.length * LB.lineH + 6 };
 }
+/* 課題の吹き出し（「課題を表示」中）。幅は空きに合わせて minW〜maxW、文は最大 lines 行（超える分は、マウスを乗せる・選ぶと全文）。
+   gap はステップとの間。roomT / roomB は吹き出しとレーンの端の間に空ける幅（レーンの端を通る線と条件ラベルの通り道） */
+const CO = { minW: 150, maxW: 300, lines: 4, lineH: 18, font: 12, padX: 9, padY: 7, icon: 21, gap: 14, roomT: 16, roomB: 18 };
 const labelCut = t => !!t && edgeLabel(t).lines.join("") !== t;
 const CUT_TIP = "長いため図では省略されます（全文は矢印のラベルにマウスを乗せると表示）";
 const markCut = el => { const c = labelCut(el.value); el.classList.toggle("cut", c); el.title = c ? CUT_TIP : ""; };
@@ -692,7 +716,9 @@ function linkedIds(f){
   f.steps.forEach(s => s.next.forEach(e => { if (e.to !== s.id && ids.has(e.to)){ on.add(s.id); on.add(e.to); } }));
   return on;
 }
-function layout(f){
+// co は課題の吹き出しの置き方（calloutPlan の結果）。渡すと、吹き出しを入れるレーンをその分だけ上下に広げて配置する。
+// placeOnly なら、ステップの置き場所（レーン・段・列）だけを決めて返す（線は引かない）
+function layout(f, co, placeOnly){
   const lanes = f.lanes.slice();
   const laneIdx = new Map(lanes.map((l, i) => [l.id, i]));
   if (f.steps.some(s => !laneIdx.has(s.lane))){ laneIdx.set("__none", lanes.length); lanes.push({ id: "__none", name: "（担当未設定）", ghost: true }); }
@@ -713,29 +739,69 @@ function layout(f){
   steps.forEach(s => { if (!order.includes(s.id)) order.push(s.id); });
 
   /* columns: 同じレーンの前ステップなら次の列へ。別レーンから受け取るだけなら同じ列の真下・真上に置く。
-     occ = ステップのあるマス、pass = 縦の矢印が通り抜けるマス */
-  const col = new Map(), occ = new Set(), pass = new Set(), key = (r, c) => r + ":" + c;
-  const free = (r, c) => !occ.has(key(r, c)) && !pass.has(key(r, c));
-  const span = (r1, r2) => { const a = []; for (let r = Math.min(r1, r2) + 1; r < Math.max(r1, r2); r++) a.push(r); return a; };
+     段：レーンの中は上から段 0, 1, … に分かれる。同じレーンの前ステップの段（複数なら一番上）を引き継ぎ、
+     同じ前ステップから分かれた先どうしが同じマスを取り合うときは、右へずらさず同じ列の下の段に置く（縦に並べる）。
+     マスは レーン r・段 t・列 c。cells = ステップのあるマス、segs = 同じ列を縦に走る矢印（両端の [レーン, 段]） */
+  const col = new Map(), tier = new Map(), cells = new Map(), segs = [];
+  const cell = (r, t, c) => r + ":" + t + ":" + c, cmp = (p, q) => p[0] - q[0] || p[1] - q[1];
+  const tiers = lanes.map(() => new Set([0]));
+  const between = (p, q, m) => { const [lo, hi] = cmp(p, q) < 0 ? [p, q] : [q, p]; return cmp(lo, m) < 0 && cmp(m, hi) < 0; };
+  const cellFree = (r, t, c) => !cells.has(cell(r, t, c)) && !segs.some(g => g.c === c && between(g.a, g.b, [r, t]));
+  // 列 c で a と b の間（両端を除く）にある段がすべて空いているか
+  const pathFree = (a, b, c) => lanes.every((l, r) => [...tiers[r]].every(t => !between(a, b, [r, t]) || cellFree(r, t, c)));
+  const place = (id, r, t, c) => { cells.set(cell(r, t, c), id); col.set(id, c); tier.set(id, t); tiers[r].add(t); };
+  const succ = new Map(steps.map(s => [s.id, new Set()])); preds.forEach((ps, id) => ps.forEach(p => succ.get(p).add(id)));
   // 列を指定したステップ（図で左右に動かしたもの）は先にその列へ置く。同じマスが埋まっていれば右へずらす
   order.forEach(id => {
     const s = byId.get(id); if (!s.col) return;
-    const r = rowOf(s); let c = s.col - 1;
-    while (occ.has(key(r, c))) c++;
-    occ.add(key(r, c)); col.set(id, c);
+    const r = rowOf(s), t = s.row ? s.row - 1 : 0; let c = s.col - 1;
+    while (cells.has(cell(r, t, c))) c++;
+    place(id, r, t, c);
   });
   order.forEach(id => {
     if (col.has(id)) return;
-    const r = rowOf(byId.get(id)), ps = [...new Set(preds.get(id))].filter(p => col.has(p)).map(p => ({ c: col.get(p), r: rowOf(byId.get(p)) }));
-    let c = 0; ps.forEach(p => { c = Math.max(c, p.c + (p.r === r ? 1 : 0)); });
-    const ok = c => free(r, c) && ps.every(p => p.c !== c || span(p.r, r).every(m => free(m, c)));
-    while (!ok(c)) c++;
-    occ.add(key(r, c)); col.set(id, c);
-    ps.forEach(p => { if (p.c === c) span(p.r, r).forEach(m => pass.add(key(m, c))); });
+    const s = byId.get(id), r = rowOf(s), ps = [...new Set(preds.get(id))].filter(p => col.has(p)).map(p => ({ id: p, c: col.get(p), r: rowOf(byId.get(p)), t: tier.get(p) }));
+    // 別のレーンからこのレーンへ 2 つ以上に分かれた先は、真下・真上ではなく前ステップの次の列に縦に並べる
+    const fork = p => p.r !== r && [...succ.get(p.id)].filter(x => rowOf(byId.get(x)) === r).length > 1;
+    let c = 0; ps.forEach(p => { c = Math.max(c, p.c + (p.r === r || fork(p) ? 1 : 0)); });
+    const own = ps.filter(p => p.r === r), t0 = s.row ? s.row - 1 : own.length ? Math.min(...own.map(p => p.t)) : 0;
+    const ok = (t, c) => cellFree(r, t, c) && ps.every(p => p.c !== c || pathFree([p.r, p.t], [r, t], c));
+    let t = t0;
+    while (!ok(t, c)){
+      // ふさいでいるのが同じ前ステップから分かれた先なら下の段へ。それ以外は右の列へ
+      const o = cells.get(cell(r, t, c));
+      if (!s.row && o && ps.some(p => succ.get(p.id).has(o))) t++;
+      else { c++; t = t0; }
+    }
+    place(id, r, t, c);
+    ps.forEach(p => { if (p.c === c) segs.push({ c, a: [p.r, p.t], b: [r, t] }); });
   });
   const maxCol = Math.max(0, ...col.values());
+  /* 段を詰めて、図の上から通し番号の「行」にする（中身のない段は描かない。どのレーンも 1 行以上）。
+     ここから先の線の引き回しは行ごとに考える。rows[g] = { r: レーン, t: 詰めたあとの段, t0: 詰める前の段 }
+     occ = ステップのある行・列、pass = 縦の矢印が通り抜ける行・列 */
+  const rows = [], rowAt = new Map();
+  lanes.forEach((l, r) => {
+    const ts = [...new Set(steps.filter(s => rowOf(s) === r).map(s => tier.get(s.id)))].sort((a, b) => a - b);
+    (ts.length ? ts : [0]).forEach((t0, t) => { rowAt.set(r + ":" + t0, rows.length); rows.push({ r, t, t0 }); });
+  });
+  const gOf = s => rowAt.get(rowOf(s) + ":" + tier.get(s.id));
+  const occ = new Set(), pass = new Set(), key = (g, c) => g + ":" + c;
+  steps.forEach(s => occ.add(key(gOf(s), col.get(s.id))));
+  rows.forEach((w, g) => segs.forEach(sg => { if (between(sg.a, sg.b, [w.r, w.t0])) pass.add(key(g, sg.c)); }));
+  const free = (g, c) => !occ.has(key(g, c)) && !pass.has(key(g, c));
+  const span = (r1, r2) => { const a = []; for (let r = Math.min(r1, r2) + 1; r < Math.max(r1, r2); r++) a.push(r); return a; };
+  /* 行の縦の位置。bandY[g] が行 g の上端（bandY[rows.length] が図の下端）。吹き出しのぶん padT / padB を足す。
+     laneY[r] はレーン r の上端（laneY[lanes.length] が図の下端） */
+  const padT = rows.map(() => 0), padB = rows.map(() => 0);
+  (co || []).forEach(c => { const s = byId.get(c.id); if (!s) return; const g = gOf(s); if (c.side === "T") padT[g] = Math.max(padT[g], c.h + CO.roomT); else padB[g] = Math.max(padB[g], c.h + CO.roomB); });
+  const bandY = [0]; rows.forEach((w, g) => bandY.push(bandY[g] + padT[g] + G.laneH + padB[g]));
+  const rowY = rows.map((w, g) => bandY[g] + padT[g] + (G.laneH - G.nodeH) / 2);
+  const laneY = lanes.map((l, r) => bandY[rows.findIndex(w => w.r === r)]); laneY.push(bandY[rows.length]);
+  // pos.r は行、l はレーン、t はレーンの中の段（詰めたあと）
   const pos = new Map();
-  steps.forEach(s => { const r = rowOf(s), c = col.get(s.id); pos.set(s.id, { x: 0, y: r * G.laneH + (G.laneH - G.nodeH) / 2, w: G.nodeW, h: G.nodeH, r, c }); });
+  steps.forEach(s => { const g = gOf(s), c = col.get(s.id); pos.set(s.id, { x: 0, y: rowY[g], w: G.nodeW, h: G.nodeH, r: g, l: rows[g].r, t: rows[g].t, c }); });
+  if (placeOnly) return { lanes, rows, steps, pos };
   const blocked = (r, c1, c2) => { for (let c = c1 + 1; c < c2; c++) if (occ.has(key(r, c))) return true; return false; };
 
   /* edges: 経路の種類を決める
@@ -793,7 +859,7 @@ function layout(f){
      左から入るほうが道のりが短ければ左へ入れる（下へ入れるために大きく回り込まないように） */
   {
     const cw = G.nodeW + G.gap, cx = c => c * cw + G.nodeW / 2, gx = c => c * cw - G.gap / 2;
-    const chB = r => (r + 1) * G.laneH - 9, mid = r => r * G.laneH + G.laneH / 2, bot = r => mid(r) + G.nodeH / 2;
+    const chB = r => bandY[r + 1] - 9, mid = r => rowY[r] + G.nodeH / 2, bot = r => mid(r) + G.nodeH / 2;
     const leftUsed = id => edges.some(F => (F.t.id === id && F.ti === "L") || (F.s.id === id && F.so === "L"));
     edges.forEach(E => {
       if (E.kind !== "loop" || leftUsed(E.t.id)) return;
@@ -816,7 +882,7 @@ function layout(f){
 
   // channels: レーン上下端を横に走る線は、同じ端を使う順に少しずつずらす
   const chans = new Map();
-  const chan = (r, sd) => { const k = r + sd, i = chans.get(k) || 0; chans.set(k, i + 1); return sd === "B" ? (r + 1) * G.laneH - 9 - (i % 3) * G.chan : r * G.laneH + 9 + (i % 3) * G.chan; };
+  const chan = (r, sd) => { const k = r + sd, i = chans.get(k) || 0; chans.set(k, i + 1); return sd === "B" ? bandY[r + 1] - 9 - (i % 3) * G.chan : bandY[r] + 9 + (i % 3) * G.chan; };
   // tracks: 列のすき間を縦に走る線。gap g は列 g と g+1 の間（-1 はレーン名の右）
   const tracks = new Map(), zone = new Map();
   const track = (g, E, role, y1, y2) => { if (!tracks.has(g)) tracks.set(g, []); const t = { E, role, y1, y2 }; tracks.get(g).push(t); return t; };
@@ -891,10 +957,25 @@ function layout(f){
   pos.forEach(p => { p.x = colX[p.c]; });
   const gapX = g => g < 0 ? G.label : colX[g] + G.nodeW;
   const tx = (g, t) => gapX(g) + t.off;
+  const width = colX[maxCol] + G.nodeW + G.pad;
+
+  /* 課題の吹き出しの位置。ステップの上（T）か下（B）の辺の ax から短い線を出し、その先に置く。
+     横の位置は ax からのずれ（dx）で受け取る（列の位置は吹き出しの有無で変わらない） */
+  const callouts = [];
+  (co || []).forEach(c => {
+    const s = byId.get(c.id), p = s && pos.get(c.id); if (!p) return;
+    const [ax, ay] = portAt(s, p, c.side, c.sx);
+    const edge = c.side === "T" ? topY(s, p) : p.y + p.h + (s.type === "decision" ? 6 : 0);
+    const x = Math.max(G.label + 2, Math.min(ax + c.dx, width - c.w - 2));
+    const y = c.side === "T" ? edge - CO.gap - c.h : edge + CO.gap;
+    callouts.push({ ...c, ax, ay, x, y, stemY: c.side === "T" ? y + c.h : y });
+  });
 
   /* 辺を指定した矢印（custom）の経路：出口・入口から少し外へ出し、その間を縦横の線でつなぐ。
      折れる位置は、列のすき間の中央・レーン上下端の通り道などから、ステップの箱を横切らず短く折れの少ないものを選ぶ */
   const boxes = steps.map(s => { const p = pos.get(s.id), d = s.type === "decision"; return { id: s.id, x1: p.x - (d ? 4 : 0) - 3, y1: p.y - (d ? 6 : 0) - 3, x2: p.x + p.w + (d ? 4 : 0) + 3, y2: p.y + p.h + (d ? 6 : 0) + 3 }; });
+  // 吹き出しと、ステップとの間の線も横切らないようにする
+  callouts.forEach(c => boxes.push({ id: c.id, x1: c.x - 3, y1: Math.min(c.y, c.ay) - 3, x2: c.x + c.w + 3, y2: Math.max(c.y + c.h, c.ay) + 3 }));
   const DIR = { R: [1, 0], L: [-1, 0], T: [0, -1], B: [0, 1] };
   const cuts = (p, q, b) => p[1] === q[1]
     ? p[1] > b.y1 && p[1] < b.y2 && Math.max(p[0], q[0]) > b.x1 && Math.min(p[0], q[0]) < b.x2
@@ -906,7 +987,7 @@ function layout(f){
     return false;
   };
   const xsMid = []; for (let g = -1; g <= maxCol; g++) xsMid.push(gapX(g) + (g < maxCol ? gapW.get(g) : G.pad) / 2);
-  const ysMid = []; lanes.forEach((l, r) => ysMid.push(r * G.laneH + 9, (r + 1) * G.laneH - 9));
+  const ysMid = []; rows.forEach((w, g) => ysMid.push(bandY[g] + 9, bandY[g + 1] - 9));
   function routeCustom(E, S, T){
     const d = 16, ds = DIR[E.so], dt = DIR[E.ti];
     const S0 = [S[0] + ds[0] * d, S[1] + ds[1] * d], T0 = [T[0] + dt[0] * d, T[1] + dt[1] * d];
@@ -958,7 +1039,7 @@ function layout(f){
         case "skip": { const x1 = tx(a.c, E.tx), x2 = tx(b.c - 1, E.tn); pts = [S, [x1, S[1]], [x1, E.ch], [x2, E.ch], [x2, T[1]], T]; break; }
         case "dv": pts = [S, [S[0], T[1]], T]; break;
         case "dskip": { const x = tx(b.c - 1, E.tn); pts = [S, [S[0], E.ch], [x, E.ch], [x, T[1]], T]; break; }
-        case "vert": { if (S[0] === T[0]) pts = [S, T]; else { const m = (b.r > a.r ? b.r : a.r) * G.laneH; pts = [S, [S[0], m], [T[0], m], T]; } break; }
+        case "vert": { if (S[0] === T[0]) pts = [S, T]; else { const m = bandY[Math.max(a.r, b.r)]; pts = [S, [S[0], m], [T[0], m], T]; } break; }
         case "loop": {
           if (E.leftIn){ const x = tx(b.c - 1, E.tb); pts = [S, [S[0], E.chS], [x, E.chS], [x, T[1]], T]; }
           else if (a.r === b.r || E.direct) pts = [S, [S[0], E.chS], [T[0], E.chS], T];
@@ -975,9 +1056,58 @@ function layout(f){
   const obst = [];
   steps.forEach(s => { const p = pos.get(s.id), d = s.type === "decision"; obst.push({ x1: p.x - (d ? 4 : 0) - 2, y1: p.y - (d ? 20 : 14), x2: p.x + p.w + (d ? 4 : 0) + 2, y2: p.y + p.h + (d ? 6 : 0) + 2, wt: 2 }); });
   edges.forEach(E => { const [x, y] = E.pts[E.pts.length - 1]; obst.push({ x1: x - 8, y1: y - 8, x2: x + 8, y2: y + 8, wt: 2 }); });
+  callouts.forEach(c => obst.push({ x1: c.x - 3, y1: c.y - 3, x2: c.x + c.w + 3, y2: c.y + c.h + 3, wt: 3 }));
   edges.forEach(E => { if (E.label){ E.lp = placeLabel(E.pts, E.label, obst); obst.push({ x1: E.lp[0] - E.label.w / 2 - 3, y1: E.lp[1] - E.label.h / 2 - 3, x2: E.lp[0] + E.label.w / 2 + 3, y2: E.lp[1] + E.label.h / 2 + 3, wt: 3 }); } });
 
-  return { lanes, steps, pos, edges, colX, linked: linkedIds(f), width: colX[maxCol] + G.nodeW + G.pad, height: Math.max(1, lanes.length) * G.laneH };
+  return { lanes, rows, steps, pos, edges, colX, laneY, bandY, rowY, callouts, linked: linkedIds(f), width, height: lanes.length ? laneY[lanes.length] : G.laneH };
+}
+/* 課題の吹き出しの置き方を、吹き出しなしで配置した図 L から決める。
+   ・向き：矢印が出入りしない辺（上を優先）。上下とも使われていれば、出入りの少ない辺
+   ・線を出す位置：その辺の矢印の出入り口からいちばん離れた所（空いていれば真ん中）
+   ・幅：同じレーンの同じ側の、縦に走る線・隣の吹き出しとぶつからない範囲で minW〜maxW
+   ・高さ：文の長さに合わせて最大 CO.lines 行。収まらない分は最後の行を「…」で切る */
+function calloutPlan(L){
+  const segs = [];
+  L.edges.forEach(E => { for (let i = 1; i < E.pts.length; i++){ const [x1, y1] = E.pts[i - 1], [x2, y2] = E.pts[i]; if (x1 === x2) segs.push({ x: x1, y1: Math.min(y1, y2), y2: Math.max(y1, y2) }); } });
+  const items = L.steps.filter(s => s.issue && s.issue.trim() && L.pos.has(s.id)).map(s => {
+    const p = L.pos.get(s.id), cx = p.x + p.w / 2;
+    const ends = sd => L.edges.flatMap(E => {
+      const n = E.pts.length - 1;
+      if (E.kind === "self") return E.s === s && sd === "T" ? [E.pts[0][0], E.pts[n][0]] : [];
+      return [...(E.s === s && E.so === sd ? [E.pts[0][0]] : []), ...(E.t === s && E.ti === sd ? [E.pts[n][0]] : [])];
+    });
+    const opt = side => {
+      const used = ends(side);
+      let sx = 0, far = -1;
+      [0, -p.w / 4, p.w / 4, -(p.w / 2 - 16), p.w / 2 - 16].forEach(o => { const d = used.length ? Math.min(...used.map(x => Math.abs(cx + o - x))) : Infinity; if (d > far + 0.5){ far = d; sx = o; } });
+      // 吹き出しが入る帯（レーンの上端〜ステップの上、またはステップの下〜レーンの下端）と、そこを縦に走る線にはさまれた空き [lo, hi]
+      const ax = cx + sx, [y1, y2] = side === "T" ? [L.bandY[p.r], p.y] : [p.y + p.h, L.bandY[p.r + 1]];
+      let lo = G.label + 6, hi = L.width - 6;
+      segs.forEach(g => { if (g.y2 > y1 + 1 && g.y1 < y2 - 1){ if (g.x < ax - 4) lo = Math.max(lo, g.x + 8); else if (g.x > ax + 4) hi = Math.min(hi, g.x - 8); } });
+      return { s, r: p.r, side, sx, ax, lo, hi, used: used.length };
+    };
+    // 矢印の出入りがない辺を優先（上を先に）。どちらにも出入りがあれば、空きの広いほう
+    const [t, b] = [opt("T"), opt("B")];
+    return !t.used ? t : !b.used ? b : (b.hi - b.lo > t.hi - t.lo ? b : t);
+  });
+  return items.map(it => {
+    let { lo, hi } = it;
+    items.forEach(o => { if (o !== it && o.r === it.r && o.side === it.side){ const m = (it.ax + o.ax) / 2; if (o.ax < it.ax) lo = Math.max(lo, m + 4); else hi = Math.min(hi, m - 4); } });
+    const room = Math.max(CO.minW, Math.min(CO.maxW, hi - lo)), pad = CO.padX * 2 + CO.icon;
+    const per = (room - pad) / CO.font - 0.6, full = wrapText(it.s.issue, per), cut = full.length > CO.lines;
+    // 短い課題は、文の幅まで縮める
+    const w = Math.min(room, Math.ceil(Math.max(...full.map(t => [...t].reduce((a, ch) => a + (/[\x00-\xff]/.test(ch) ? 0.58 : 1), 0))) * CO.font + pad + 4));
+    const x = w > hi - lo ? it.ax - w / 2 : Math.min(Math.max(it.ax - w / 2, lo), hi - w);
+    const lines = full.slice(0, CO.lines);
+    if (cut){ let t = [...lines[CO.lines - 1]]; while (t.length && wrapText(t.join("") + "…", per).length > 1) t.pop(); lines[CO.lines - 1] = t.join("") + "…"; }
+    const hOf = n => CO.padY * 2 + n * CO.lineH;
+    return { id: it.s.id, side: it.side, sx: it.sx, dx: x - it.ax, w, h: hOf(lines.length), lines, full, fullH: hOf(full.length), cut };
+  });
+}
+// 図に描く配置。「課題を表示」中は、吹き出しなしでいったん配置して吹き出しの置き方を決め、その分レーンを広げて配置し直す
+function diagramLayout(f){
+  const L = layout(f);
+  return showIssues && f.steps.some(s => s.issue && s.issue.trim()) ? layout(f, calloutPlan(L)) : L;
 }
 const DB_RY = 8; // データ（円柱）の上下の楕円の縦の半径
 const topY = (st, p) => p.y + (st.type === "decision" ? -6 : (st.type === "start" || st.type === "end") ? 6 : 0);
@@ -1034,6 +1164,20 @@ function placeLabel(pts, lb, obst){
   }
   return pick;
 }
+// 課題の文を、全角 per 文字分の幅ごとの行に分ける。改行はそのまま残し、句読点や閉じ括弧は行頭に来ないよう前の行へぶら下げる
+function wrapText(t, per){
+  const lines = [];
+  String(t).replace(/\s+$/, "").split(/\r?\n/).forEach(par => {
+    let cur = "", w = 0;
+    for (const ch of [...par]){
+      const cw = /[\x00-\xff]/.test(ch) ? 0.58 : 1;
+      if (w + cw > per && cur && !/[、。，．,.)）」』】！？!?]/.test(ch)){ lines.push(cur); cur = ""; w = 0; }
+      cur += ch; w += cw;
+    }
+    lines.push(cur);
+  });
+  return lines;
+}
 function wrapLabel(t, per = 9, max = 3){
   const lines = []; let cur = "", w = 0;
   for (const ch of [...t]){ const cw = /[\x00-\xff]/.test(ch) ? 0.55 : 1; if (w + cw > per){ lines.push(cur); cur = ""; w = 0; } cur += ch; w += cw; }
@@ -1055,7 +1199,7 @@ function shapeSvg(type, x, y, w, h){
   }
 }
 function renderSvg(f, issues, selected, selEdge){
-  const L = layout(f);
+  const L = diagramLayout(f), coBy = new Map(L.callouts.map(c => [c.id, c]));
   const issueBy = new Map(); issues.forEach(i => { if (i.step && (!issueBy.has(i.step) || i.level === "bad")) issueBy.set(i.step, i.level); });
   const W = Math.max(L.width, 420), H = Math.max(L.height, G.laneH);
   // レーン名の列は別のSVGにして左端に固定（横スクロールしても見えるように）。図本体は label 以降だけを描く
@@ -1065,10 +1209,10 @@ function renderSvg(f, issues, selected, selEdge){
   const marker = (id, c, o = 1) => `<marker id="${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 1 9 5 0 9z" fill="var(${c})" fill-opacity="${o}"/></marker>`;
   s += `<defs>${marker("arr", "--muted")}${marker("arrS", "--sel")}${marker("arrH", "--sel", 0.6)}</defs>`;
   L.lanes.forEach((l, i) => {
-    const y = i * G.laneH;
-    s += `<rect x="0" y="${y}" width="${W}" height="${G.laneH}" fill="${i % 2 ? "var(--lane-b)" : "var(--lane-a)"}"/>`;
-    head += `<rect x="0" y="${y}" width="${G.label}" height="${G.laneH}" fill="var(--lane-head)"/>`;
-    const lines = wrapLabel(l.name, 6, 3), ly = y + G.laneH / 2 - (lines.length - 1) * 9;
+    const y = L.laneY[i], lh = L.laneY[i + 1] - y;
+    s += `<rect x="0" y="${y}" width="${W}" height="${lh}" fill="${i % 2 ? "var(--lane-b)" : "var(--lane-a)"}"/>`;
+    head += `<rect x="0" y="${y}" width="${G.label}" height="${lh}" fill="var(--lane-head)"/>`;
+    const lines = wrapLabel(l.name, 6, 3), ly = y + lh / 2 - (lines.length - 1) * 9;
     lines.forEach((t, k) => { head += `<text x="${G.label / 2}" y="${ly + k * 18}" text-anchor="middle" dominant-baseline="middle" font-size="13" font-weight="600" fill="${l.ghost ? "var(--bad)" : "var(--ink)"}">${esc(t)}</text>`; });
     if (i){ const ln = `<line x1="0" x2="${W}" y1="${y}" y2="${y}" stroke="var(--line-strong)"/>`; s += ln; head += ln; }
   });
@@ -1100,10 +1244,11 @@ function renderSvg(f, issues, selected, selEdge){
     const ty = p.y + p.h / 2 - (lines.length - 1) * 8 - (st.type === "document" ? 3 : 0) + (st.type === "data" ? 4 : 0);
     lines.forEach((t, k) => { s += `<text x="${p.x + p.w / 2}" y="${ty + k * 16}" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="500" fill="${onDark ? (st.type === "start" ? "var(--accent-ink)" : "var(--paper)") : (st.label ? "var(--ink)" : "var(--muted)")}">${esc(t)}</text>`; });
     s += `<text x="${p.x + 2}" y="${p.y - 4 - (st.type === "decision" ? 6 : 0)}" font-size="10" font-family="IBM Plex Mono, monospace" fill="var(--muted)">${esc(st.id)}</text>`;
-    // 右上のしるし：課題（赤い角丸の四角に「!」）を一番右に、補足（メモ）はその左に並べる
+    // 右上のしるし：課題（赤い角丸の四角に「!」）を一番右に、補足（メモ）はその左に並べる。
+    // 課題を吹き出しで出している間は、しるしが二重にならないよう課題のしるしは出さない（補足を右端へ詰める）
     const by = p.y + (onDark ? 8 : -3); // 上辺にまたがせ、3行の文言とも重ならない高さ
     let bx = p.x + p.w - 4;
-    if (st.issue){ s += `<rect x="${bx - 8}" y="${by - 8}" width="16" height="16" rx="4" fill="var(--bad)" stroke="var(--surface)" stroke-width="1.5"/><path d="M${bx} ${by - 4.2}v5" stroke="var(--surface)" stroke-width="2" stroke-linecap="round"/><circle cx="${bx}" cy="${by + 4}" r="1.2" fill="var(--surface)"/>`; bx -= 20; }
+    if (st.issue && !coBy.has(st.id)){ s += `<rect x="${bx - 8}" y="${by - 8}" width="16" height="16" rx="4" fill="var(--bad)" stroke="var(--surface)" stroke-width="1.5"/><path d="M${bx} ${by - 4.2}v5" stroke="var(--surface)" stroke-width="2" stroke-linecap="round"/><circle cx="${bx}" cy="${by + 4}" r="1.2" fill="var(--surface)"/>`; bx -= 20; }
     // 補足は課題と同じ大きさの角丸の四角。白地に灰色の枠とメモの線で、赤い課題より目立たないようにする
     if (st.note) s += `<rect x="${bx - 8}" y="${by - 8}" width="16" height="16" rx="4" fill="var(--surface)" stroke="var(--muted)" stroke-width="1.3"/><path d="M${bx - 4} ${by - 3.5}h8M${bx - 4} ${by}h8M${bx - 4} ${by + 3.5}h5" stroke="var(--muted)" stroke-width="1.4" stroke-linecap="round"/>`;
     const lv = issueBy.get(st.id);
@@ -1117,6 +1262,22 @@ function renderSvg(f, issues, selected, selEdge){
     s += `<g class="elabel" data-edge="${esc(E.s.id)}" data-k="${E.s.next.indexOf(E.e)}"><title>${esc(t + "\nダブルクリックで条件を編集")}</title><rect x="${x - w / 2}" y="${y - h / 2}" width="${w}" height="${h}" rx="${Math.min(10, h / 2)}" fill="var(--surface)" stroke="${c}"/>`;
     lines.forEach((ln, k) => { s += `<text x="${x}" y="${y - (lines.length - 1) * LB.lineH / 2 + k * LB.lineH + 1}" text-anchor="middle" dominant-baseline="middle" font-size="${LB.font}" fill="var(--ink)">${esc(ln)}</text>`; });
     s += `</g>`;
+  });
+  // 課題の吹き出し。ステップとは短い線でつなぐ。文を省いたものは、マウスを乗せる・選ぶと全文の吹き出しを一番手前に重ねる（co-pop）
+  const coBody = (c, y, h, lines) => {
+    const ix = c.x + CO.padX, iy = y + CO.padY + CO.lineH / 2 - 7;
+    let g = `<rect class="co-box" x="${c.x}" y="${y}" width="${c.w}" height="${h}" rx="7"/>`;
+    g += `<rect x="${ix}" y="${iy}" width="14" height="14" rx="3" fill="var(--bad)"/><path d="M${ix + 7} ${iy + 3.2}v4.6" stroke="var(--surface)" stroke-width="2" stroke-linecap="round"/><circle cx="${ix + 7}" cy="${iy + 10.8}" r="1.1" fill="var(--surface)"/>`;
+    lines.forEach((t, k) => { g += `<text x="${ix + CO.icon}" y="${y + CO.padY + CO.lineH / 2 + k * CO.lineH}" dominant-baseline="middle" font-size="${CO.font}" fill="var(--ink)">${esc(t)}</text>`; });
+    return g;
+  };
+  L.callouts.forEach(c => {
+    s += `<g class="callout" data-co="${esc(c.id)}" aria-hidden="true"><path class="co-stem" d="M${c.ax} ${c.ay}V${c.stemY}"/><circle cx="${c.ax}" cy="${c.ay}" r="2.6" fill="var(--bad)"/>${coBody(c, c.y, c.h, c.lines)}</g>`;
+  });
+  let pops = "";
+  L.callouts.filter(c => c.cut).forEach(c => {
+    const y = c.side === "T" ? c.y + c.h - c.fullH : Math.min(c.y, H - 2 - c.fullH);
+    pops += `<g class="co-pop${c.id === selected ? " sel" : ""}" data-co="${esc(c.id)}" aria-hidden="true">${coBody(c, Math.max(2, y), c.fullH, c.full)}</g>`;
   });
   // 選択中のステップの上下左右に「＋」。右は同じ担当、上・下は1つ上・下のレーンの担当で次のステップを作る（ドラッグでつなぐ）。
   // 左は同じ担当で前のステップを作る（ドラッグで別のステップからつなぐ）
@@ -1139,7 +1300,7 @@ function renderSvg(f, issues, selected, selEdge){
     s += end("s", SE.pts[0], "ドラッグで出るステップ・出る辺を変える");
     s += end("t", SE.pts[SE.pts.length - 1], "ドラッグでつなぎ先・入る辺を変える");
   }
-  return `<div class="diagram">${head}${s}</svg></div>`;
+  return `<div class="diagram">${head}${s}${pops}</svg></div>`;
 }
 
 /* ---------- state ---------- */
@@ -1151,6 +1312,7 @@ let selEdge = null; // 図の上で選んだ矢印 { sid: つなぎ元のステ�
 let dirty = false, saving = false, again = false, saveTimer = 0;
 let zoom = 1, tab = "edit";
 let lastL = null; // 最後に描いた図の配置（図の上でのドラッグ操作で使う）
+let showIssues = lsGet("flowbook.showIssues") === "1"; // 課題を吹き出しで常に表示する（この端末で覚えておく）
 
 /* 元に戻す（Ctrl+Z）/ やり直す（Ctrl+Y・Ctrl+Shift+Z）。変更前の YAML を積んでおく。
    文字入力は 1.5 秒以内の続きをまとめて 1 回分にする */
@@ -1521,7 +1683,7 @@ function showEmpty(){
     $("#tab-edit").innerHTML = `<p class="help">作業フォルダを開くと、ここでステップを編集できます。</p>`;
     $("#tab-setup").innerHTML = `<p class="help">作業フォルダを開くと、ここで管理部署や担当（レーン）を設定できます。</p>`;
     $("#tab-check").innerHTML = ""; $("#tab-hist").innerHTML = ""; $("#yamlText").value = "";
-    $("#issueCount").textContent = "0"; $("#issueCount").className = "count";
+    $("#issueCount").textContent = "0"; $("#issueCount").className = "count"; updateIssueBtn();
     updateHint(); renderList();
     return;
   }
@@ -1529,7 +1691,7 @@ function showEmpty(){
   $("#tab-edit").innerHTML = `<p class="help">左の一覧または上のボタンからフローを作成すると、ここでステップを編集できます。</p>`;
   $("#tab-setup").innerHTML = `<p class="help">フローを作成すると、ここで管理部署や担当（レーン）を設定できます。</p>`;
   $("#tab-check").innerHTML = ""; $("#tab-hist").innerHTML = ""; $("#yamlText").value = "";
-  $("#issueCount").textContent = "0"; $("#issueCount").className = "count";
+  $("#issueCount").textContent = "0"; $("#issueCount").className = "count"; updateIssueBtn();
   updateHint(); renderList();
 }
 
@@ -1550,18 +1712,22 @@ function commit(opts = {}){
   markDirty();
 }
 /* 矢印がすべて外れたステップは、自動の配置だと左端へ詰められて見失いやすい。
-   直前の図で置かれていた列に固定（col）して、その場に留める */
+   直前の図で置かれていた列・段に固定（col・row）して、その場に留める */
 function keepUnlinked(){
   if (!lastL?.linked) return;
   const now = linkedIds(flow);
   const lost = flow.steps.filter(s => !s.col && lastL.linked.has(s.id) && !now.has(s.id) && lastL.pos.has(s.id));
   if (!lost.length) return;
-  const pos = layout(flow).pos;
+  const pos = layout(flow, null, true).pos;
   lost.forEach(s => { const c = lastL.pos.get(s.id).c; if (pos.get(s.id)?.c !== c) s.col = c + 1; });
+  // 段も元のまま留める（列を固定すると段は引き継がれなくなるので、置き直して確かめる）
+  const pos2 = layout(flow, null, true).pos;
+  lost.forEach(s => { const t = lastL.pos.get(s.id).t; if (pos2.get(s.id) && pos2.get(s.id).t !== t) s.row = t + 1; });
 }
 function refresh(withForm){
   issues = validate(flow);
   drawCanvas();
+  updateIssueBtn();
   const bad = issues.filter(i => i.level === "bad").length, warn = issues.filter(i => i.level === "warn").length;
   const c = $("#issueCount"); c.textContent = bad + warn; c.className = "count" + (bad ? " bad" : warn ? " warn" : "");
   if (withForm) renderForm(); else updateFlags();
@@ -1652,7 +1818,7 @@ function renderForm(){
         <div class="field"><label for="sl-${esc(s.id)}">内容</label><input class="inp" id="sl-${esc(s.id)}" data-sf="label" value="${esc(s.label)}" placeholder="例：申請書を作成"></div>
         <div class="grid2"><div class="field"><label for="st-${esc(s.id)}">種類</label><select class="inp" id="st-${esc(s.id)}" data-sf="type">${Object.entries(TYPES).map(([k, v]) => `<option value="${k}" ${k === s.type ? "selected" : ""}>${v}</option>`).join("")}</select></div>
         <div class="field"><label for="sn-${esc(s.id)}">担当</label><select class="inp" id="sn-${esc(s.id)}" data-sf="lane">${laneOpts(s.lane)}</select></div></div>
-        ${s.col ? `<div class="row"><span class="help">図の位置：左から ${s.col} 列目に固定（図でドラッグして指定）</span><button class="btn sm ghost" data-act="col-auto">位置を自動に戻す</button></div>` : ""}
+        ${s.col || s.row ? `<div class="row"><span class="help">図の位置：${[s.col ? `左から ${s.col} 列目` : "", s.row ? `上から ${(lastL?.pos.get(s.id)?.t ?? s.row - 1) + 1} 段目` : ""].filter(Boolean).join("・")}に固定（図でドラッグして指定）</span><button class="btn sm ghost" data-act="col-auto">位置を自動に戻す</button></div>` : ""}
         <div class="field"><label for="so-${esc(s.id)}">補足（帳票名・期限・ルールなど）</label><textarea class="inp" id="so-${esc(s.id)}" data-sf="note" rows="2">${esc(s.note)}</textarea></div>
         <div class="field"><label for="si-${esc(s.id)}">課題（問題点・改善したい点）</label><textarea class="inp issue-inp" id="si-${esc(s.id)}" data-sf="issue" rows="2" placeholder="例：紙の書類を目視で確認しており時間がかかる">${esc(s.issue)}</textarea></div>
         <div class="field"><span class="lbl">次のステップ${s.type === "decision" ? "（分岐ごとに条件を書く）" : ""}</span>`;
@@ -1831,7 +1997,7 @@ onPanels("click", ev => {
       toast("ステップを削除しました。前後のつながりは自動でつなぎ直しています（Ctrl+Z で元に戻せます）"); return;
     }
     case "next-del": s.next.splice(+b.dataset.k, 1); break;
-    case "col-auto": delete s.col; toast("図の位置を自動に戻しました"); break;
+    case "col-auto": delete s.col; delete s.row; toast("図の位置を自動に戻しました"); break;
     case "dup": { const f = JSON.parse(JSON.stringify(flow)); f.name += "（コピー）"; create(toYaml(f)).then(ok => ok && toast("複製しました")); return; }
     case "flow-del": {
       b.dataset.orig = "このフローを削除"; if (!arm(b, "flow" + currentId, "もう一度押すと完全に削除")) return;
@@ -1868,6 +2034,8 @@ $("#canvas").addEventListener("click", ev => {
   const g = ev.target.closest("[data-step]");
   // 選択中のステップをもう一度クリックしても描き直さない（ダブルクリックで編集できるように）
   if (g){ if (g.dataset.step !== selected) select(g.dataset.step); else if (tab !== "edit") setTab("edit"); return; }
+  // 課題の吹き出し：そのステップを選ぶ
+  const co = ev.target.closest("[data-co]"); if (co){ if (co.dataset.co !== selected) select(co.dataset.co); else if (tab !== "edit") setTab("edit"); return; }
   const n = ev.target.closest("[data-new]"); if (n){ startNew(n.dataset.new); return; }
   const fo = ev.target.closest("[data-folder]"); if (fo){ folderAction(fo.dataset.folder); return; }
   const e = ev.target.closest("[data-edge]"); if (e){ selectEdge(e.dataset.edge, +e.dataset.k); return; }
@@ -1884,6 +2052,8 @@ $("#canvas").addEventListener("keydown", ev => {
 $("#canvas").addEventListener("dblclick", ev => {
   if (!flow) return;
   const g = ev.target.closest("[data-step]"); if (g){ ev.preventDefault(); editStepInline(g.dataset.step); return; }
+  // 課題の吹き出しをダブルクリック：編集エリアの課題の欄で書き直す
+  const co = ev.target.closest("[data-co]"); if (co){ ev.preventDefault(); editIssue(co.dataset.co); return; }
   const e = ev.target.closest("[data-edge]");
   if (e) editEdgeInline(e.dataset.edge, +e.dataset.k, e.classList.contains("ehit") ? toSvg(ev.clientX, ev.clientY) : null);
 });
@@ -1891,6 +2061,7 @@ $("#canvas").addEventListener("dblclick", ev => {
 // 描き直さずにクラスだけ付け替える（描き直すとダブルクリックやフォーカスが途切れるため）
 const hovKey = el => {
   const g = el?.closest?.("#canvas [data-step]"); if (g) return "step\n" + g.dataset.step;
+  const co = el?.closest?.("#canvas [data-co]"); if (co) return "step\n" + co.dataset.co;
   const e = el?.closest?.("#canvas .ehit, #canvas .elabel"); return e ? "edge\n" + e.dataset.edge + "\n" + e.dataset.k : null;
 };
 function applyHover(){
@@ -1900,6 +2071,8 @@ function applyHover(){
   const [kind, id, k] = key && !busy ? key.split("\n") : [];
   showTip(kind === "step" ? id : null);
   if (!kind) return;
+  // ステップと、その課題の吹き出しを一緒に強調する（どちらに乗せても、どれとどれが対応しているかわかるように）
+  if (kind === "step") c.querySelectorAll(`[data-step="${CSS.escape(id)}"], [data-co="${CSS.escape(id)}"]`).forEach(el => el.classList.add("hv"));
   const paths = [...c.querySelectorAll("path.edge")].filter(p => kind === "step" ? p.dataset.s === id || p.dataset.t === id : p.dataset.s === id && p.dataset.k === k);
   const keys = new Set(paths.map(p => p.dataset.s + "\n" + p.dataset.k));
   paths.forEach(p => p.classList.add("hv"));
@@ -1916,12 +2089,14 @@ const TIP_ICON = {
 let tipId = null;
 function showTip(id){
   const tip = $("#stepTip"), st = id && flow ? flow.steps.find(s => s.id === id) : null;
-  const g = st && (st.note || st.issue) && !inlineEd ? $("#canvas").querySelector(`[data-step="${CSS.escape(id)}"] .shape`) : null;
+  // 課題を吹き出しで出しているときは、ツールチップには補足だけを出す
+  const issue = st && !(lastL?.callouts.some(c => c.id === id)) ? st.issue : "";
+  const g = st && (st.note || issue) && !inlineEd ? $("#canvas").querySelector(`[data-step="${CSS.escape(id)}"] .shape`) : null;
   if (!g){ tip.hidden = true; tipId = null; return; }
-  if (tipId !== id){
-    tipId = id;
+  if (tipId !== id + "\n" + !!issue){
+    tipId = id + "\n" + !!issue;
     const sec = (cls, label, text) => `<div class="tt-sec ${cls}"><div class="tt-h">${TIP_ICON[cls.slice(3)]}${label}</div><div class="tt-b">${esc(text)}</div></div>`;
-    tip.innerHTML = (st.note ? sec("tt-note", "補足", st.note) : "") + (st.issue ? sec("tt-issue", "課題", st.issue) : "");
+    tip.innerHTML = (st.note ? sec("tt-note", "補足", st.note) : "") + (issue ? sec("tt-issue", "課題", issue) : "");
   }
   // 図の見えている範囲から外れたステップには出さない
   const r = g.getBoundingClientRect(), cr = $("#canvas").getBoundingClientRect();
@@ -1936,7 +2111,7 @@ const hideTip = () => { $("#stepTip").hidden = true; tipId = null; };
 // ドラッグやダブルクリックでの編集を始めたら隠す（描き直したあとに、乗せたままなら出し直す）
 $("#canvas").addEventListener("pointerdown", hideTip, true);
 $("#canvas").addEventListener("dblclick", hideTip, true);
-$("#canvas").addEventListener("scroll", () => { if (tipId) showTip(tipId); });
+$("#canvas").addEventListener("scroll", () => { if (tipId) showTip(tipId.split("\n")[0]); });
 $("#canvas").addEventListener("mouseover", ev => { const key = hovKey(ev.target); if (key !== hovMouse){ hovMouse = key; applyHover(); } });
 $("#canvas").addEventListener("mouseleave", () => { if (hovMouse){ hovMouse = null; applyHover(); } });
 $("#canvas").addEventListener("focusin", ev => { hovFocus = ev.target.matches(":focus-visible") ? hovKey(ev.target) : null; applyHover(); });
@@ -1953,7 +2128,7 @@ function setZoom(z, px, py){
   c.scrollLeft = (x - PX) * r + PX - px; c.scrollTop = (y - PY) * r + PY - py;
 }
 function fitZoom(){
-  if (!flow) return; const L = layout(flow), c = $("#canvas"); if (!c.clientWidth) return;
+  if (!flow) return; const L = diagramLayout(flow), c = $("#canvas"); if (!c.clientWidth) return;
   const z = Math.min((c.clientWidth - 34) / Math.max(L.width, 420), (c.clientHeight - 42) / L.height, 1.4);
   zoom = Math.min(2, Math.max(0.2, Math.round(z * 100) / 100)); drawCanvas(); c.scrollLeft = 0; c.scrollTop = 0;
 }
@@ -1967,6 +2142,26 @@ const zoomStep = (dir, px, py) => setZoom(dir > 0 ? Math.floor(zoom * 10 + 1e-6)
 $("#zoomIn").onclick = () => zoomStep(1);
 $("#zoomOut").onclick = () => zoomStep(-1);
 $("#zoomFit").onclick = fitZoom;
+// 課題を表示：課題をステップのそばの吹き出しで常に出す。オフのときは、ステップに乗せたときのツールチップだけで見せる
+function updateIssueBtn(){
+  const b = $("#issueBtn"), n = flow ? flow.steps.filter(s => s.issue && s.issue.trim()).length : 0;
+  $("#issueBtnCount").textContent = n;
+  b.disabled = !n;
+  b.setAttribute("aria-pressed", String(showIssues));
+  b.title = !n ? "課題が書かれたステップはありません" : showIssues ? "課題の吹き出しを隠します（ステップにマウスを乗せると表示）" : "課題を、ステップのそばの吹き出しで常に表示します";
+}
+$("#issueBtn").onclick = () => {
+  showIssues = !showIssues; lsSet("flowbook.showIssues", showIssues ? "1" : "");
+  updateIssueBtn(); drawCanvas();
+  if (selected) revealStep(selected);
+};
+// 課題の欄を開いて書き直す（図の吹き出しのダブルクリック）
+function editIssue(id){
+  if ($(".body").classList.contains("focus")) $("#focusBtn").click();
+  select(id);
+  const t = $("#si-" + CSS.escape(id)); if (!t) return;
+  t.scrollIntoView({ block: "nearest" }); t.focus(); t.setSelectionRange(t.value.length, t.value.length);
+}
 // 図だけ表示：フロー一覧と編集エリアを隠す。図の上での編集はそのまま使える
 $("#focusBtn").onclick = () => {
   const on = $(".body").classList.toggle("focus"), b = $("#focusBtn");
@@ -2014,13 +2209,36 @@ function focusNode(id){ const g = id && nodeEl(id); g && g.focus({ preventScroll
 function toSvg(cx, cy){ const m = mainSvg()?.getScreenCTM(); if (!m) return null; const p = new DOMPoint(cx, cy).matrixTransform(m.inverse()); return [p.x, p.y]; }
 function toClient(x, y){ const m = mainSvg()?.getScreenCTM(); if (!m) return null; const p = new DOMPoint(x, y).matrixTransform(m); return [p.x, p.y]; }
 // 図の y 座標にあるレーン。図の外や「担当未設定」の仮レーンは null
-function laneAt(y){ if (!lastL || y < 0) return null; const l = lastL.lanes[Math.floor(y / G.laneH)]; return l && !l.ghost ? l : null; }
+function laneAt(y){ if (!lastL || y < 0) return null; const l = lastL.lanes[lastL.laneY.findIndex((t, i) => y < lastL.laneY[i + 1])]; return l && !l.ghost ? l : null; }
+/* 図の y 座標にある段。行の帯の上下の端のすぐ近くは段と段の間（新しい段を差し込む）、それ以外はその段。
+   { lane, t: レーンの中の段（0 始まり。差し込むときは差し込んだあとの段）, ins: 差し込むか, y: 置き場所の箱の上端, line: 差し込む位置の線の y } */
+function slotAt(y){
+  const lane = laneAt(y); if (!lane) return null;
+  const li = lastL.lanes.indexOf(lane), B = lastL.bandY, gs = lastL.rows.map((w, g) => g).filter(g => lastL.rows[g].r === li);
+  const g = gs.find(g => y < B[g + 1]) ?? gs[gs.length - 1], t = lastL.rows[g].t, q = Math.min(18, (B[g + 1] - B[g]) / 6);
+  // 差し込む箱は境目にまたがせる（レーンの端では、レーンの内側に収める）
+  const ins = (line, t) => ({ lane, t, ins: true, line, y: Math.max(lastL.laneY[li] + 3, Math.min(lastL.laneY[li + 1] - G.nodeH - 3, line - G.nodeH / 2)) });
+  if (y < B[g] + q) return ins(B[g], t);
+  if (y > B[g + 1] - q) return ins(B[g + 1], t + 1);
+  return { lane, t, ins: false, y: lastL.rowY[g] };
+}
+// ステップをドラッグして p（図の座標）まで動かしたときの段。つかんだ位置によらず、動かした箱の真ん中の高さで決める
+const dropSlot = (P, p, sp) => slotAt(p[1] - sp[1] + P.y + P.h / 2);
+// 置き場所の箱（と差し込む位置の線）を見せる。sl が null なら隠す
+function showSlot(sl, x){
+  const sv = mainSvg(), gh = sv.querySelector(".drop-ghost"), ln = sv.querySelector(".drop-line");
+  gh.setAttribute("visibility", sl ? "visible" : "hidden");
+  ln.setAttribute("visibility", sl?.ins ? "visible" : "hidden");
+  if (!sl) return;
+  gh.setAttribute("x", x); gh.setAttribute("y", sl.y);
+  if (sl.ins){ ln.setAttribute("x1", x - 14); ln.setAttribute("x2", x + G.nodeW + 14); ln.setAttribute("y1", sl.line); ln.setAttribute("y2", sl.line); }
+}
 // 列の左端の x（図の右端より先は、ふつうの列幅で並ぶものとして延ばす）と、x に一番近い列
 const colLeft = c => { const X = lastL.colX, n = X.length - 1; return c <= n ? X[c] : X[n] + (c - n) * (G.nodeW + G.gap); };
 function colAt(x){ let c = 0; while (Math.abs(colLeft(c + 1) + G.nodeW / 2 - x) < Math.abs(colLeft(c) + G.nodeW / 2 - x)) c++; return c; }
 function showLaneHi(l){
   const i = l ? lastL.lanes.indexOf(l) : -1;
-  document.querySelectorAll("#canvas .lane-hi").forEach(r => { r.setAttribute("visibility", i < 0 ? "hidden" : "visible"); if (i >= 0) r.setAttribute("y", i * G.laneH); });
+  document.querySelectorAll("#canvas .lane-hi").forEach(r => { r.setAttribute("visibility", i < 0 ? "hidden" : "visible"); if (i >= 0){ r.setAttribute("y", lastL.laneY[i]); r.setAttribute("height", lastL.laneY[i + 1] - lastL.laneY[i]); } });
 }
 
 /* その場の入力欄。anchor() は入力欄を重ねる位置（画面座標の矩形）を返し、スクロールや描き直しのたびに置き直す。
@@ -2079,22 +2297,24 @@ function editEdgeInline(sid, k, pt){
 }
 function scrollCard(id){ const el = document.querySelector(`[data-stepcard="${CSS.escape(id)}"]`); el && el.scrollIntoView({ block: "nearest" }); }
 /* 次のステップを作ってつなぐ。判断・まだ次がないステップ・branch 指定のときは分岐を足し、
-   それ以外は今の次のステップとの間に挟む（フォームの「この後にステップを挿入」と同じ） */
-function addNext(srcId, laneId, branch){
+   それ以外は今の次のステップとの間に挟む（フォームの「この後にステップを挿入」と同じ）。sl（slotAt の形）を渡すとその段に置く */
+function addNext(srcId, laneId, branch, sl){
   const s = flow.steps.find(x => x.id === srcId); if (!s) return;
   const id = newStepId(), ns = { id, type: "task", lane: laneId, label: "", note: "", issue: "", next: [] };
   if (branch || s.type === "decision" || !s.next.length) s.next.push({ to: id, when: "" });
   else { ns.next = s.next; s.next = [{ to: id, when: "" }]; }
   flow.steps.splice(flow.steps.indexOf(s) + 1, 0, ns);
+  if (sl) pinSlot(ns, sl.lane, sl, null);
   commit({ form: true, select: id }); scrollCard(id); editStepInline(id);
 }
 /* 前のステップを作って dstId へつなぐ。branch 指定がなければ、dstId へ来ていた矢印（差し戻しを除く）を
    新しいステップへ付け替えて間に挟む */
-function addPrev(dstId, laneId, branch){
+function addPrev(dstId, laneId, branch, sl){
   const t = flow.steps.find(x => x.id === dstId); if (!t) return;
   const id = newStepId(), ns = { id, type: "task", lane: laneId, label: "", note: "", issue: "", next: [{ to: dstId, when: "" }] };
   if (!branch) layout(flow).edges.forEach(E => { if (E.t === t && !E.back) E.e.to = id; });
   flow.steps.splice(flow.steps.indexOf(t), 0, ns);
+  if (sl) pinSlot(ns, sl.lane, sl, null);
   commit({ form: true, select: id }); scrollCard(id); editStepInline(id);
 }
 function plus(side){
@@ -2197,8 +2417,8 @@ $("#canvas").addEventListener("pointermove", ev => {
     if (Math.hypot(ev.clientX - drag.x, ev.clientY - drag.y) < 5) return;
     drag.moved = true; try { c.setPointerCapture(ev.pointerId); } catch {} c.classList.add(drag.reattach ? "reattaching" : drag.link ? "linking" : "dragging");
     if (inlineEd) inlineEd.finish(true);
-    if (drag.link) mainSvg().insertAdjacentHTML("beforeend", `<path class="link-temp" marker-end="url(#arrS)"/><rect class="drop-ghost" width="${G.nodeW}" height="${G.nodeH}" rx="6" visibility="hidden"/>`);
-    else if (!drag.reattach) mainSvg().insertAdjacentHTML("beforeend", `<rect class="drop-ghost" width="${G.nodeW}" height="${G.nodeH}" rx="6" visibility="hidden"/>`);
+    if (drag.link) mainSvg().insertAdjacentHTML("beforeend", `<path class="link-temp" marker-end="url(#arrS)"/><rect class="drop-ghost" width="${G.nodeW}" height="${G.nodeH}" rx="6" visibility="hidden"/><line class="drop-line" visibility="hidden"/>`);
+    else if (!drag.reattach) mainSvg().insertAdjacentHTML("beforeend", `<rect class="drop-ghost" width="${G.nodeW}" height="${G.nodeH}" rx="6" visibility="hidden"/><line class="drop-line" visibility="hidden"/>`);
     if (drag.reattach) mainSvg().insertAdjacentHTML("beforeend", `<path class="link-temp" marker-end="url(#arrS)"/><circle class="side-mark" r="5" visibility="hidden"/>`);
   }
   autoScroll(ev);
@@ -2222,19 +2442,16 @@ $("#canvas").addEventListener("pointermove", ev => {
     // 左の＋（前のステップ）からは、離した先から選択中のステップへ向かう矢印
     const [a, b] = drag.side === "L" ? [p, drag.from] : [drag.from, p];
     sv.querySelector(".link-temp").setAttribute("d", `M${a[0]} ${a[1]} L${b[0]} ${b[1]}`);
-    const empty = !tgt && lane;
-    gh.setAttribute("visibility", empty ? "visible" : "hidden");
-    if (empty){ gh.setAttribute("x", p[0] - G.nodeW / 2); gh.setAttribute("y", lastL.lanes.indexOf(lane) * G.laneH + (G.laneH - G.nodeH) / 2); }
-    showLaneHi(empty ? lane : null);
+    const sl = !tgt && lane ? slotAt(p[1]) : null;
+    showSlot(sl, p[0] - G.nodeW / 2);
+    showLaneHi(sl ? lane : null);
   } else {
     const g = nodeEl(drag.id);
     if (g){ g.classList.add("dragging"); g.setAttribute("transform", `translate(${p[0] - drag.sp[0]} ${p[1] - drag.sp[1]})`); }
-    // 離したときに置かれる場所（列・レーン）を点線の箱で示す
-    const P = lastL.pos.get(drag.id), c = P && colAt(P.x + G.nodeW / 2 + p[0] - drag.sp[0]), gh = mainSvg().querySelector(".drop-ghost");
-    const show = !!(P && lane && (c !== P.c || lastL.lanes.indexOf(lane) !== P.r));
-    gh.setAttribute("visibility", show ? "visible" : "hidden");
-    if (show){ gh.setAttribute("x", colLeft(c)); gh.setAttribute("y", lastL.lanes.indexOf(lane) * G.laneH + (G.laneH - G.nodeH) / 2); }
-    showLaneHi(lane);
+    // 離したときに置かれる場所（列・レーン・段）を点線の箱で示す。段を差し込むときは境目に線も出す
+    const P = lastL.pos.get(drag.id), c = P && colAt(P.x + G.nodeW / 2 + p[0] - drag.sp[0]), sl = P && inCanvas(ev) ? dropSlot(P, p, drag.sp) : null;
+    showSlot(sl && (sl.ins || c !== P.c || lastL.lanes.indexOf(sl.lane) !== P.l || sl.t !== P.t) ? sl : null, colLeft(c));
+    showLaneHi(sl?.lane);
   }
 });
 function endDrag(ev, cancel){
@@ -2250,27 +2467,51 @@ function endDrag(ev, cancel){
     const prev = d.side === "L";
     // 差し戻しになるときは、ドラッグを始めた＋の辺から線を出す（左の＋は選択中のステップの左の辺へ入れる）
     if (tgt) prev ? connect(tgt, d.id, { entry: "L" }) : connect(d.id, tgt, { exit: d.side });
-    else if (lane) prev ? addPrev(d.id, lane.id, true) : addNext(d.id, lane.id, true);
+    else if (lane){ const sl = slotAt(p[1]); prev ? addPrev(d.id, lane.id, true, sl) : addNext(d.id, lane.id, true, sl); }
     else drawCanvas();
     return;
   }
-  const s = flow.steps.find(x => x.id === d.id), P = lastL.pos.get(d.id);
-  const c = s && P && lane ? colAt(P.x + G.nodeW / 2 + p[0] - d.sp[0]) : -1;
-  if (c < 0 || (lane.id === s.lane && c === P.c)){ drawCanvas(); return; }
-  moveStep(s, lane, c);
+  const s = flow.steps.find(x => x.id === d.id), P = lastL.pos.get(d.id), sl = s && P && p ? dropSlot(P, p, d.sp) : null;
+  const c = sl ? colAt(P.x + G.nodeW / 2 + p[0] - d.sp[0]) : -1;
+  if (!sl || (sl.lane.id === s.lane && c === P.c && sl.t === P.t && !sl.ins)){ drawCanvas(); return; }
+  moveStep(s, sl.lane, c, { ...sl, drop: true });
 }
-/* ステップを lane の c 列目（0 始まり）へ動かす。自動で決まる列と同じなら列の指定（col）は外し、違えば col に残す。
-   同じマスを指定していたほかのステップは、指定を外して自動の配置に戻す */
-function moveStep(s, lane, c){
-  const laneChg = lane.id !== s.lane, colChg = c !== lastL.pos.get(s.id).c;
-  s.lane = lane.id; delete s.col;
-  const auto = layout(flow).pos.get(s.id).c;
-  if (auto !== c){
-    s.col = c + 1;
-    flow.steps.forEach(x => { if (x !== s && x.lane === s.lane && x.col === s.col) delete x.col; });
-  }
+/* 図の位置の指定（col・row）を書く。s を lane の段 sl（slotAt の形）・c 列目（0 始まり。null なら列は自動のまま）に置く。
+   段を差し込むときは、そのレーンで差し込む位置から下のステップを 1 段ずつ下げる。
+   ほかのステップのいるマスへ置くときは、そのマスから下（同じ列）のステップを 1 段ずつ下げる（sl.drop のない左右だけの移動＝ Shift+←→ を除く）。
+   下げたステップには段を書き、もともと段を指定していたステップは今の段に書き直す（指定のないステップは前のステップの段を引き継ぐ）。
+   Shift+←→ で同じマスに列を指定していたステップは、列の指定を外して自動の配置に戻す。最後に、外しても配置が変わらない指定を外す */
+function pinSlot(s, lane, sl, c){
+  const L0 = lastL, li = L0.lanes.indexOf(lane), touched = [s], P = L0.pos.get(s.id);
+  const push = c != null && !sl.ins && (sl.drop || !P || P.l !== li || P.t !== sl.t)
+    && L0.steps.some(x => x.id !== s.id && L0.pos.get(x.id)?.l === li && L0.pos.get(x.id).t === sl.t && L0.pos.get(x.id).c === c);
+  s.lane = lane.id;
+  if (c != null) s.col = c + 1;
+  flow.steps.forEach(x => {
+    const p = x !== s && L0.pos.get(x.id); if (!p || p.l !== li) return;
+    const down = p.t >= sl.t && (sl.ins || (push && p.c === c));
+    if (down || x.row){ x.row = p.t + 1 + (down ? 1 : 0); touched.push(x); }
+    if (push && down) x.col = c + 1;
+    else if (c != null && !sl.ins && p.t === sl.t && x.col === s.col) delete x.col;
+  });
+  s.row = sl.t + 1;
+  prunePins(touched);
+}
+// list のステップの col・row のうち、外してもステップの置き場所（レーン・段・列）が変わらないものを外す
+function prunePins(list){
+  const spots = () => { const P = layout(flow, null, true).pos; return flow.steps.map(x => { const p = P.get(x.id); return p ? p.l + ":" + p.t + ":" + p.c : ""; }).join(); };
+  const want = spots();
+  // 列の指定を外すと段が自動に戻ることがあるので、2 回まわす
+  for (let i = 0; i < 2; i++) list.forEach(x => ["col", "row"].forEach(k => { if (!x[k]) return; const v = x[k]; delete x[k]; if (spots() !== want) x[k] = v; }));
+}
+/* ステップを lane の段 sl・c 列目（0 始まり）へ動かす。自動で決まる位置と同じなら指定（col・row）は外し、違えば残す */
+function moveStep(s, lane, c, sl){
+  const P = lastL.pos.get(s.id), laneChg = lane.id !== s.lane;
+  pinSlot(s, lane, sl, c);
   commit({ form: true, select: s.id });
-  toast(laneChg && colChg ? `担当を「${lane.name}」に変更し、${c + 1}列目に移動しました` : laneChg ? `担当を「${lane.name}」に変更しました` : `${c + 1}列目に移動しました`);
+  const Q = layout(flow, null, true), P2 = Q.pos.get(s.id), multi = Q.rows.filter(w => w.r === P2.l).length > 1;
+  const at = `${P2.c + 1}列目${multi ? `・上から${P2.t + 1}段目` : ""}`;
+  toast(laneChg ? (P2.c !== P.c || multi ? `担当を「${lane.name}」に変更し、${at}に移動しました` : `担当を「${lane.name}」に変更しました`) : sl.ins ? `新しい段を作り、${at}に移動しました` : `${at}に移動しました`);
 }
 $("#canvas").addEventListener("pointerup", ev => endDrag(ev, false));
 $("#canvas").addEventListener("pointercancel", ev => endDrag(ev, true));
@@ -2289,14 +2530,14 @@ document.addEventListener("keydown", e => {
   if (!flow || inlineEd || drag || e.target.closest?.("input, textarea, select, [contenteditable]")) return;
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
   if (mod && !e.altKey && (k === "z" || k === "y")){ e.preventDefault(); undo(k === "y" || e.shiftKey); return; }
-  // Shift+←→ で選択中のステップを左右の列へ、Shift+↑↓ で上下のレーンへ動かす（ドラッグと同じ）
+  // Shift+←→ で選択中のステップを左右の列へ、Shift+↑↓ で上下の段（レーンの端では隣のレーン）へ動かす（ドラッグと同じ）
   if (e.shiftKey && !mod && !e.altKey && /^Arrow/.test(e.key) && selected && !selEdge && lastL?.pos.has(selected)){
     const s = curStep(), P = lastL.pos.get(selected); if (!s) return;
     e.preventDefault();
     const dc = { ArrowLeft: -1, ArrowRight: 1 }[e.key] || 0, dr = { ArrowUp: -1, ArrowDown: 1 }[e.key] || 0;
-    const lane = lastL.lanes[P.r + dr], c = P.c + dc;
+    const w = lastL.rows[P.r + dr], lane = w && lastL.lanes[w.r], c = P.c + dc;
     if (!lane || lane.ghost || c < 0){ toast("これ以上は動かせません"); return; }
-    moveStep(s, lane, c); return;
+    moveStep(s, lane, c, { lane, t: w.t, ins: false }); return;
   }
   if (mod || e.altKey) return;
   if (selEdge && (e.key === "Delete" || e.key === "Backspace")){
