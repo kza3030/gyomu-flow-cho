@@ -3,6 +3,9 @@
 (() => {
 "use strict";
 const TYPES = { start:"開始", task:"作業", decision:"判断", system:"システム", document:"帳票", data:"データ", end:"終了" };
+/* 入出力・システム：ステップの補助の項目（どれも任意の自由記述）。[YAML のキー, 画面の名前] の並びで、書き出す順もこの順 */
+const INFO = [["input", "入力情報"], ["output", "出力情報"], ["files", "関連ファイル・帳票"], ["tool", "使用システム・ツール"], ["channel", "伝達手段"]];
+const hasInfo = s => INFO.some(([k]) => s[k] && String(s[k]).trim());
 /* 矢印がステップのどの辺から出る（exit）・入る（entry）か。省くと自動。内部では T/B/L/R で持つ */
 const SIDES = { top: "T", bottom: "B", left: "L", right: "R" };
 const SIDE_NAME = { T: "上", B: "下", L: "左", R: "右" };
@@ -31,7 +34,9 @@ function normalize(raw){
   });
   steps.forEach((s, i) => {
     if (!s || typeof s !== "object") return;
-    const st = { id: String(s.id ?? ("s" + (i + 1))), type: TYPES[s.type] ? s.type : "task", lane: String(s.lane ?? ""), label: String(s.label ?? ""), note: s.note != null ? String(s.note) : "", issue: s.issue != null ? String(s.issue) : "", next: normNext(s.next) };
+    const st = { id: String(s.id ?? ("s" + (i + 1))), type: TYPES[s.type] ? s.type : "task", lane: String(s.lane ?? ""), label: String(s.label ?? ""), note: s.note != null ? String(s.note) : "", issue: s.issue != null ? String(s.issue) : "" };
+    INFO.forEach(([k]) => { st[k] = s[k] != null ? String(s[k]) : ""; });
+    st.next = normNext(s.next);
     // col: 図で左から何列目に置くか（1 始まり）。省くと自動で決める
     if (Number.isInteger(+s.col) && +s.col >= 1) st.col = +s.col;
     // row: レーンの中で上から何段目に置くか（1 始まり。中身のない段は詰めて描く）。省くと自動で決める
@@ -52,6 +57,7 @@ function toPlain(f){
     r.label = s.label;
     if (s.note) r.note = s.note;
     if (s.issue) r.issue = s.issue;
+    INFO.forEach(([k]) => { if (s[k]) r[k] = s[k]; });
     if (s.next.length){
       if (s.next.every(e => !e.when && !e.exit && !e.entry)) r.next = s.next.length === 1 ? s.next[0].to : s.next.map(e => e.to);
       else r.next = s.next.map(e => {
@@ -73,5 +79,5 @@ function parseYaml(text){ return normalize(jsyaml.load(text)); }
 
 function uid(prefix, taken){ let n = 1; while (taken.has(prefix + n)) n++; return prefix + n; }
 
-Object.assign(globalThis.Flowbook ??= {}, { TYPES, SIDES, SIDE_NAME, sideIn, sideOut, normNext, normalize, toPlain, toYaml, parseYaml, uid });
+Object.assign(globalThis.Flowbook ??= {}, { TYPES, INFO, hasInfo, SIDES, SIDE_NAME, sideIn, sideOut, normNext, normalize, toPlain, toYaml, parseYaml, uid });
 })();

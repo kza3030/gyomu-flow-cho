@@ -41,6 +41,7 @@ const s = {
   tab: "edit",          // 右の編集エリアで開いているタブ
   lastL: null,          // 最後に描いた図の配置（図の上でのドラッグ操作で使う）
   showIssues: false,    // 課題を吹き出しで常に表示する（この端末で覚えておく）
+  showInfo: false,      // 入出力・システムをステップの箱の中に表示する（この端末で覚えておく）
 };
 
 // 読むための窓口。どのフィールドにも書き込み口を付けないので、代入すると（"use strict" のもとでは）エラーになる
@@ -72,6 +73,7 @@ const setZoom = v => { s.zoom = v; };
 const setTab = v => { s.tab = v; };
 const setLastL = v => { s.lastL = v; };
 const setShowIssues = v => { s.showIssues = v; };
+const setShowInfo = v => { s.showInfo = v; };
 
 /* フローの一覧（records）。ここで変えるのはメモリの上だけ。ファイルや DB から消すのは app.js の removeRecord */
 const setRecord = (id, rec) => { s.records.set(id, rec); };
@@ -108,7 +110,7 @@ Object.assign(globalThis.Flowbook ??= {}, {
   state,
   setStore, setDb, setDir, setHistDir, setLastDir, setPendingCreate, setFirstRecords, setConflictId, setBroken, setLegacy, setScanning,
   setCurrentId, setFlow, setYamlSrc, setIssues, setSelected, setSelEdge,
-  setDirty, setSaving, setAgain, setSaveTimer, setZoom, setTab, setLastL, setShowIssues,
+  setDirty, setSaving, setAgain, setSaveTimer, setZoom, setTab, setLastL, setShowIssues, setShowInfo,
   setRecord, forgetRecord, clearRecords, setFileMeta, forgetFileMeta, clearFileMeta, markUnexported, markExported, clearUnexported, forgetLegacy,
   pushUndo, resetUndo, takeUndo
 });
