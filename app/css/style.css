@@ -174,6 +174,9 @@ body.resizing-row{cursor:row-resize;user-select:none}
 .step-tip .tt-h svg{width:14px;height:14px;flex:none}
 .step-tip .tt-b{white-space:pre-wrap;overflow-wrap:anywhere}
 .step-tip .tt-issue .tt-h{color:var(--bad)}
+.step-tip .tt-info dl{display:grid;grid-template-columns:auto 1fr;gap:1px 8px;margin:0}
+.step-tip .tt-info dt{color:var(--muted);font-size:11.5px}
+.step-tip .tt-info dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
 .step-tip .tt-sec+.tt-sec{border-top:1px dashed var(--line);padding-top:7px}
 .inline-edit{position:fixed;z-index:30;height:32px;border:2px solid var(--sel);border-radius:6px;background:var(--surface);padding:3px 8px;font-size:13px;box-shadow:var(--shadow);outline:none}
 .inline-edit.cut{border-color:var(--warn)}
@@ -238,6 +241,11 @@ textarea.inp{resize:vertical;min-height:54px}
 /* 課題のしるし（チェックの丸い警告と見分けられるよう、角丸の四角に「!」） */
 .imark{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:3px;background:var(--bad);color:var(--surface);font-size:10px;font-weight:700;line-height:1;vertical-align:1px}
 textarea.inp.issue-inp{border-left:3px solid var(--bad)}
+/* 入出力・システムの欄（たたみ込み） */
+.info-sec{border:1px solid var(--line);border-radius:8px;padding:6px 10px}
+.info-sec[open]{display:grid;gap:8px;padding-bottom:10px}
+.info-sec summary{cursor:pointer;font-size:11.5px;color:var(--muted);font-weight:500}
+textarea.inp.info-inp{resize:vertical;min-height:0}
 
 .yaml-wrap{display:grid;gap:8px;height:100%;grid-template-rows:auto minmax(0,1fr) auto}
 .yaml{width:100%;height:100%;min-height:320px;font-family:var(--f-mono);font-size:12.5px;line-height:1.6;border:1px solid var(--line-strong);border-radius:6px;padding:10px 12px;background:var(--lane-b);resize:none;tab-size:2;white-space:pre;overflow:auto}
@@ -318,8 +326,9 @@ textarea.inp.issue-inp{border-left:3px solid var(--bad)}
 .body.focus{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
 .body.focus .panel,.body.focus .splitter,.body.focus .memo{display:none}
 @media (min-width:861px){.body.focus .side{display:none}}
-#issueBtn svg{width:14px;height:14px;flex:none}
+#issueBtn svg,#infoBtn svg{width:14px;height:14px;flex:none}
 #issueBtn .cnt{background:color-mix(in srgb,var(--bad) 14%,transparent);color:var(--bad);border-radius:999px;padding:0 6px;font-size:11px;font-weight:600;line-height:16px;font-variant-numeric:tabular-nums}
-#issueBtn:disabled{opacity:.5;cursor:default}
-#issueBtn[aria-pressed="true"],#focusBtn[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+#infoBtn .cnt{background:var(--accent-soft);color:var(--accent);border-radius:999px;padding:0 6px;font-size:11px;font-weight:600;line-height:16px;font-variant-numeric:tabular-nums}
+#issueBtn:disabled,#infoBtn:disabled{opacity:.5;cursor:default}
+#issueBtn[aria-pressed="true"],#infoBtn[aria-pressed="true"],#focusBtn[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
 @media (prefers-reduced-motion:reduce){.side{transition:none}.splitter::after,.memo-split::after,.memo-toggle svg{transition:none}}

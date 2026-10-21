@@ -4,7 +4,7 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const {
   TEMPLATES,
-  TYPES, SIDES, SIDE_NAME, sideIn, sideOut, normNext, normalize, toPlain, toYaml, parseYaml, uid,
+  TYPES, INFO, hasInfo, SIDES, SIDE_NAME, sideIn, sideOut, normNext, normalize, toPlain, toYaml, parseYaml, uid,
   validate,
   G, LB, CO, DB_RY, textW, edgeLabel, labelCut, linkedIds, layout, calloutPlan, topY, portAt, placeLabel, wrapText, wrapLabel
 } = Flowbook; // js/core/ の各ファイルで定義
@@ -13,7 +13,7 @@ const {
   state: S,
   setStore, setDb, setDir, setHistDir, setLastDir, setPendingCreate, setFirstRecords, setConflictId, setBroken, setLegacy, setScanning,
   setCurrentId, setFlow, setYamlSrc, setIssues, setSelected, setSelEdge,
-  setDirty, setSaving, setAgain, setSaveTimer, setZoom, setTab, setLastL, setShowIssues,
+  setDirty, setSaving, setAgain, setSaveTimer, setZoom, setTab, setLastL, setShowIssues, setShowInfo,
   setRecord, forgetRecord, clearRecords, setFileMeta, forgetFileMeta, clearFileMeta, markUnexported, markExported, clearUnexported, forgetLegacy,
   pushUndo, resetUndo, takeUndo
 } = Flowbook;
@@ -129,8 +129,12 @@ function diagramBodySvg(f, L, W, H, o){
     s += ui ? `<g class="node" data-step="${esc(st.id)}" tabindex="0" role="button" aria-label="${esc(TYPES[st.type] + "：" + (st.label || st.id) + (st.issue ? "（課題あり）" : ""))}">` : "<g>";
     if (sel) s += `<rect x="${p.x - 8}" y="${p.y - 12}" width="${p.w + 16}" height="${p.h + 24}" rx="10" fill="none" stroke="var(--sel)" stroke-width="2.5"/>`;
     s += shapeSvg(st.type, p.x, p.y, p.w, p.h);
-    const per = st.type === "decision" ? 7 : 9, lines = wrapLabel(st.label || "（未記入）", per, st.type === "decision" ? 2 : 3);
-    const ty = p.y + p.h / 2 - (lines.length - 1) * 8 - (st.type === "document" ? 3 : 0) + (st.type === "data" ? 4 : 0);
+    // 「入出力を表示」中（o.info）は、使用システム・ツールと伝達手段を内容の下に小さく 1 行出す（内容は 2 行まで）。判断・開始・終了は狭いので出さない
+    const sub = o.info && /^(task|system|document|data)$/.test(st.type) ? [st.tool, st.channel].map(t => (t || "").trim().replace(/\s*\n\s*/g, "・")).filter(Boolean).join(" ／ ") : "";
+    const per = st.type === "decision" ? 7 : 9, lines = wrapLabel(st.label || "（未記入）", per, st.type === "decision" ? 2 : sub ? 2 : 3);
+    // 帳票は下の波に、1 行足すときはさらに上げて重ならないようにする
+    const ty = p.y + p.h / 2 - (lines.length - 1) * 8 - (st.type === "document" ? (sub ? 7 : 3) : 0) + (st.type === "data" ? 4 : 0) - (sub ? 7 : 0);
+    if (sub) s += `<text class="sub" x="${p.x + p.w / 2}" y="${ty + (lines.length - 1) * 16 + 15}" text-anchor="middle" dominant-baseline="middle" font-size="10" fill="var(--muted)">${esc(wrapLabel(sub, st.type === "system" ? 11 : 12, 1)[0])}</text>`;
     lines.forEach((t, k) => { s += `<text x="${p.x + p.w / 2}" y="${ty + k * 16}" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="500" fill="${onDark ? (st.type === "start" ? "var(--accent-ink)" : "var(--paper)") : (st.label ? "var(--ink)" : "var(--muted)")}">${esc(t)}</text>`; });
     if (ui || o.ids) s += `<text x="${p.x + 2}" y="${p.y - 4 - (st.type === "decision" ? 6 : 0)}" font-size="10" font-family="${ui ? "IBM Plex Mono, monospace" : MONO_EXPORT}" fill="var(--muted)">${esc(st.id)}</text>`;
     if (ui){
@@ -200,7 +204,7 @@ function renderSvg(f, issues, selected, selEdge){
   // レーン名の列は別のSVGにして左端に固定（横スクロールしても見えるように）。図本体は label 以降だけを描く
   const FONT = "IBM Plex Sans JP, Hiragino Sans, sans-serif";
   const head = `<svg class="lanes" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${G.label} ${H}" width="${G.label * S.zoom}" height="${H * S.zoom}" role="img" aria-label="担当（レーン）" font-family="${FONT}">${laneHeadSvg(L, W, H, true)}</svg>`;
-  const body = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${G.label} 0 ${W - G.label} ${H}" width="${(W - G.label) * S.zoom}" height="${H * S.zoom}" role="img" aria-label="${esc(f.name)}のフロー図" font-family="${FONT}">${diagramBodySvg(f, L, W, H, { ui: { selected, selEdge, issueBy } })}</svg>`;
+  const body = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${G.label} 0 ${W - G.label} ${H}" width="${(W - G.label) * S.zoom}" height="${H * S.zoom}" role="img" aria-label="${esc(f.name)}のフロー図" font-family="${FONT}">${diagramBodySvg(f, L, W, H, { ui: { selected, selEdge, issueBy }, info: S.showInfo })}</svg>`;
   return `<div class="diagram">${head}${body}</div>`;
 }
 
@@ -208,6 +212,7 @@ function renderSvg(f, issues, selected, selEdge){
 // 共有の状態は js/state.js。元に戻す（Ctrl+Z）/ やり直す（Ctrl+Y・Ctrl+Shift+Z）の記録（pushUndo など）もそちら
 let hovMouse = null, hovFocus = null; // マウスを乗せた・キーボードで選んだステップや矢印（applyHover）
 setShowIssues(lsGet("flowbook.showIssues") === "1"); // 課題を吹き出しで常に表示する（この端末で覚えておく）
+setShowInfo(lsGet("flowbook.showInfo") === "1"); // 入出力・システムをステップの中に表示する（この端末で覚えておく）
 
 function setStatus(kind, text){
   const el = $("#saveState"), mem = S.store === "memory";
@@ -561,7 +566,7 @@ function showEmpty(){
     $("#tab-edit").innerHTML = `<p class="help">作業フォルダを開くと、ここでステップを編集できます。</p>`;
     $("#tab-setup").innerHTML = `<p class="help">作業フォルダを開くと、ここで管理部署や担当（レーン）を設定できます。</p>`;
     $("#tab-check").innerHTML = ""; $("#tab-hist").innerHTML = ""; $("#yamlText").value = "";
-    $("#issueCount").textContent = "0"; $("#issueCount").className = "count"; updateIssueBtn();
+    $("#issueCount").textContent = "0"; $("#issueCount").className = "count"; updateIssueBtn(); updateInfoBtn();
     updateHint(); renderList();
     return;
   }
@@ -569,7 +574,7 @@ function showEmpty(){
   $("#tab-edit").innerHTML = `<p class="help">左の一覧または上のボタンからフローを作成すると、ここでステップを編集できます。</p>`;
   $("#tab-setup").innerHTML = `<p class="help">フローを作成すると、ここで管理部署や担当（レーン）を設定できます。</p>`;
   $("#tab-check").innerHTML = ""; $("#tab-hist").innerHTML = ""; $("#yamlText").value = "";
-  $("#issueCount").textContent = "0"; $("#issueCount").className = "count"; updateIssueBtn();
+  $("#issueCount").textContent = "0"; $("#issueCount").className = "count"; updateIssueBtn(); updateInfoBtn();
   updateHint(); renderList();
 }
 
@@ -605,7 +610,7 @@ function keepUnlinked(){
 function refresh(withForm){
   setIssues(validate(S.flow));
   drawCanvas();
-  updateIssueBtn();
+  updateIssueBtn(); updateInfoBtn();
   const bad = S.issues.filter(i => i.level === "bad").length, warn = S.issues.filter(i => i.level === "warn").length;
   const c = $("#issueCount"); c.textContent = bad + warn; c.className = "count" + (bad ? " bad" : warn ? " warn" : "");
   if (withForm) renderForm(); else updateFlags();
@@ -666,6 +671,17 @@ function flagOf(id){
   const l = S.issues.find(i => i.step === id && i.level !== "info"), s = S.flow.steps.find(x => x.id === id);
   return (l ? `<span class="flag ${l.level}" title="${esc(l.msg)}"></span>` : "") + (s?.issue ? ` <span class="imark" title="${esc("課題：" + s.issue)}">!</span>` : "");
 }
+/* 入出力・システムの欄。たたんでおき、どれかに値があるか、開いたままにしていれば開いて描く */
+let infoOpen = false;
+const INFO_PH = { input: "例：申請書.xlsx", output: "例：承認依頼", files: "例：管理台帳.xlsx", tool: "例：Excel・基幹システム", channel: "例：メール" };
+function infoSec(s){
+  const fld = ([k, name]) => `<div class="field"><label for="sx-${k}-${esc(s.id)}">${name}</label><textarea class="inp info-inp" id="sx-${k}-${esc(s.id)}" data-sf="${k}" rows="1" placeholder="${INFO_PH[k]}">${esc(s[k])}</textarea></div>`;
+  const [inp, out, files, tool, ch] = INFO;
+  return `<details class="info-sec" ${infoOpen || hasInfo(s) ? "open" : ""}><summary>入出力・システム（任意）</summary>
+    <div class="grid2">${fld(inp)}${fld(out)}</div>${fld(files)}<div class="grid2">${fld(tool)}${fld(ch)}</div>
+    <p class="help" style="margin:0">図には「入出力を表示」をオンにしたときだけ、使用システム・ツールと伝達手段を出します。</p></details>`;
+}
+$("#tab-edit").addEventListener("toggle", ev => { if (ev.target.matches?.(".info-sec")) infoOpen = ev.target.open; }, true);
 function renderForm(){
   if (!S.flow) return;
   const laneOpts = cur => S.flow.lanes.map(l => `<option value="${esc(l.id)}" ${l.id === cur ? "selected" : ""}>${esc(l.name)}</option>`).join("") + (S.flow.lanes.some(l => l.id === cur) ? "" : `<option value="${esc(cur)}" selected>（未設定：${esc(cur || "なし")}）</option>`);
@@ -700,6 +716,7 @@ function renderForm(){
         ${s.col || s.row ? `<div class="row"><span class="help">図の位置：${[s.col ? `左から ${s.col} 列目` : "", s.row ? `上から ${(S.lastL?.pos.get(s.id)?.t ?? s.row - 1) + 1} 段目` : ""].filter(Boolean).join("・")}に固定（図でドラッグして指定）</span><button class="btn sm ghost" data-act="col-auto">位置を自動に戻す</button></div>` : ""}
         <div class="field"><label for="so-${esc(s.id)}">補足（帳票名・期限・ルールなど）</label><textarea class="inp" id="so-${esc(s.id)}" data-sf="note" rows="2">${esc(s.note)}</textarea></div>
         <div class="field"><label for="si-${esc(s.id)}">課題（問題点・改善したい点）</label><textarea class="inp issue-inp" id="si-${esc(s.id)}" data-sf="issue" rows="2" placeholder="例：紙の書類を目視で確認しており時間がかかる">${esc(s.issue)}</textarea></div>
+        ${infoSec(s)}
         <div class="field"><span class="lbl">次のステップ${s.type === "decision" ? "（分岐ごとに条件を書く）" : ""}</span>`;
       s.next.forEach((e, k) => {
         h += `<div class="next-row"><select class="inp" id="nx-${esc(s.id)}-${k}" data-nx="${k}" data-nf="to" aria-label="つなぎ先">${stepOpts(e.to, s.id)}</select><input class="inp${labelCut(e.when) ? " cut" : ""}" id="nw-${esc(s.id)}-${k}" data-nx="${k}" data-nf="when" value="${esc(e.when)}"${labelCut(e.when) ? ` title="${CUT_TIP}"` : ""} placeholder="${s.type === "decision" ? "条件（例：承認）" : "条件（任意）"}" aria-label="条件"><button class="mini" data-act="next-del" data-k="${k}" aria-label="このつながりを削除">✕</button></div>`;
@@ -780,6 +797,8 @@ function deleteStep(id){
   });
   S.flow.steps.splice(S.flow.steps.indexOf(s), 1);
 }
+// 新しいステップの入出力・システム（どれも空）
+const noInfo = () => Object.fromEntries(INFO.map(([k]) => [k, ""]));
 function newStepId(){ const taken = new Set(S.flow.steps.map(s => s.id)); const pre = (S.flow.steps.find(s => /^[a-z]+\d+$/i.test(s.id))?.id.match(/^[a-z]+/i) || ["s"])[0]; return uid(pre, taken); }
 
 const onPanels = (type, fn) => ["#tab-edit", "#tab-setup"].forEach(sel => $(sel).addEventListener(type, fn));
@@ -788,7 +807,7 @@ onPanels("input", ev => {
   if (t.dataset.meta){ S.flow[t.dataset.meta] = t.value; commit(); return; }
   if (t.dataset.lane != null){ S.flow.lanes[+t.dataset.lane].name = t.value; commit(); return; }
   const s = curStep(); if (!s) return;
-  if (t.dataset.sf === "label" || t.dataset.sf === "note" || t.dataset.sf === "issue"){ s[t.dataset.sf] = t.value; commit(); return; }
+  if (t.dataset.sf === "label" || t.dataset.sf === "note" || t.dataset.sf === "issue" || INFO.some(([k]) => k === t.dataset.sf)){ s[t.dataset.sf] = t.value; commit(); return; }
   if (t.dataset.nf === "when"){ s.next[+t.dataset.nx].when = t.value; markCut(t); commit(); }
 });
 onPanels("change", ev => {
@@ -836,17 +855,17 @@ onPanels("click", ev => {
     }
     case "step-add": {
       const id = newStepId(); const last = S.flow.steps[S.flow.steps.length - 1];
-      S.flow.steps.push({ id, type: S.flow.steps.length ? "task" : "start", lane: last?.lane || S.flow.lanes[0]?.id || "", label: "", note: "", issue: "", next: [] });
+      S.flow.steps.push({ id, type: S.flow.steps.length ? "task" : "start", lane: last?.lane || S.flow.lanes[0]?.id || "", label: "", note: "", issue: "", ...noInfo(), next: [] });
       setSelected(id); commit({ form: true }); focusLabel(); return;
     }
     case "insert-after": {
-      const id = newStepId(); const ns = { id, type: "task", lane: s.lane, label: "", note: "", issue: "", next: s.type === "decision" ? [] : s.next.slice() };
+      const id = newStepId(); const ns = { id, type: "task", lane: s.lane, label: "", note: "", issue: "", ...noInfo(), next: s.type === "decision" ? [] : s.next.slice() };
       if (s.type === "decision") s.next.push({ to: id, when: "" }); else s.next = [{ to: id, when: "" }];
       if (s.type === "end"){ s.type = "task"; ns.type = "end"; ns.label = s.label; s.label = ""; ns.next = []; }
       S.flow.steps.splice(idx + 1, 0, ns); setSelected(id); commit({ form: true }); focusLabel(); return;
     }
     case "branch-add": {
-      const id = newStepId(); S.flow.steps.splice(idx + 1, 0, { id, type: "task", lane: s.lane, label: "", note: "", issue: "", next: [] });
+      const id = newStepId(); S.flow.steps.splice(idx + 1, 0, { id, type: "task", lane: s.lane, label: "", note: "", issue: "", ...noInfo(), next: [] });
       s.next.push({ to: id, when: "" }); commit({ form: true }); const el = document.querySelector(`#nw-${CSS.escape(s.id)}-${s.next.length - 1}`); el && el.focus(); return;
     }
     case "sort-flow": {
@@ -963,19 +982,22 @@ function applyHover(){
 /* 補足と課題のツールチップ。マウスを乗せた（キーボードで選んだ）ステップのすぐ下に、補足→課題の順で出す */
 const TIP_ICON = {
   note: `<svg viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="1" width="12" height="12" rx="3" fill="var(--surface)" stroke="var(--muted)" stroke-width="1.2"/><path d="M4 4.5h6M4 7h6M4 9.5h4" stroke="var(--muted)" stroke-width="1.2" stroke-linecap="round"/></svg>`,
-  issue: `<svg viewBox="0 0 14 14" aria-hidden="true"><rect width="14" height="14" rx="3" fill="var(--bad)"/><path d="M7 3.2v4.6" stroke="var(--surface)" stroke-width="2" stroke-linecap="round"/><circle cx="7" cy="10.8" r="1.1" fill="var(--surface)"/></svg>`
+  issue: `<svg viewBox="0 0 14 14" aria-hidden="true"><rect width="14" height="14" rx="3" fill="var(--bad)"/><path d="M7 3.2v4.6" stroke="var(--surface)" stroke-width="2" stroke-linecap="round"/><circle cx="7" cy="10.8" r="1.1" fill="var(--surface)"/></svg>`,
+  info: `<svg viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="1" width="12" height="12" rx="3" fill="var(--surface)" stroke="var(--muted)" stroke-width="1.2"/><path d="M4 5h3.5M4 9h3.5M9 3.5 11 5 9 6.5M9 7.5 11 9 9 10.5" fill="none" stroke="var(--muted)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`
 };
 let tipId = null;
 function showTip(id){
   const tip = $("#stepTip"), st = id && S.flow ? S.flow.steps.find(s => s.id === id) : null;
   // 課題を吹き出しで出しているときは、ツールチップには補足だけを出す
   const issue = st && !(S.lastL?.callouts.some(c => c.id === id)) ? st.issue : "";
-  const g = st && (st.note || issue) && !inlineEd ? $("#canvas").querySelector(`[data-step="${CSS.escape(id)}"] .shape`) : null;
+  const g = st && (st.note || issue || hasInfo(st)) && !inlineEd ? $("#canvas").querySelector(`[data-step="${CSS.escape(id)}"] .shape`) : null;
   if (!g){ tip.hidden = true; tipId = null; return; }
   if (tipId !== id + "\n" + !!issue){
     tipId = id + "\n" + !!issue;
-    const sec = (cls, label, text) => `<div class="tt-sec ${cls}"><div class="tt-h">${TIP_ICON[cls.slice(3)]}${label}</div><div class="tt-b">${esc(text)}</div></div>`;
-    tip.innerHTML = (st.note ? sec("tt-note", "補足", st.note) : "") + (issue ? sec("tt-issue", "課題", issue) : "");
+    const sec = (cls, label, body) => `<div class="tt-sec ${cls}"><div class="tt-h">${TIP_ICON[cls.slice(3)]}${label}</div>${body}</div>`, txt = t => `<div class="tt-b">${esc(t)}</div>`;
+    // 入出力・システムは、書いた項目だけを「項目名・値」の表で並べる
+    const info = INFO.filter(([k]) => st[k] && st[k].trim()).map(([k, name]) => `<dt>${name}</dt><dd>${esc(st[k].trim())}</dd>`).join("");
+    tip.innerHTML = (st.note ? sec("tt-note", "補足", txt(st.note)) : "") + (issue ? sec("tt-issue", "課題", txt(issue)) : "") + (info ? sec("tt-info", "入出力・システム", `<dl>${info}</dl>`) : "");
   }
   // 図の見えている範囲から外れたステップには出さない
   const r = g.getBoundingClientRect(), cr = $("#canvas").getBoundingClientRect();
@@ -1033,6 +1055,18 @@ $("#issueBtn").onclick = () => {
   setShowIssues(!S.showIssues); lsSet("flowbook.showIssues", S.showIssues ? "1" : "");
   updateIssueBtn(); drawCanvas();
   if (S.selected) revealStep(S.selected);
+};
+// 入出力を表示：使用システム・ツールと伝達手段を、ステップの箱の中に小さく出す。オフのときは、ステップに乗せたときのツールチップだけで見せる
+function updateInfoBtn(){
+  const b = $("#infoBtn"), n = S.flow ? S.flow.steps.filter(hasInfo).length : 0;
+  $("#infoBtnCount").textContent = n;
+  b.disabled = !n;
+  b.setAttribute("aria-pressed", String(S.showInfo));
+  b.title = !n ? "入出力・システムが書かれたステップはありません" : S.showInfo ? "ステップの中の入出力・システムを隠します（ステップにマウスを乗せると表示）" : "使用システム・ツールと伝達手段を、ステップの中に表示します";
+}
+$("#infoBtn").onclick = () => {
+  setShowInfo(!S.showInfo); lsSet("flowbook.showInfo", S.showInfo ? "1" : "");
+  updateInfoBtn(); drawCanvas();
 };
 // 課題の欄を開いて書き直す（図の吹き出しのダブルクリック）
 function editIssue(id){
@@ -1179,7 +1213,7 @@ function scrollCard(id){ const el = document.querySelector(`[data-stepcard="${CS
    それ以外は今の次のステップとの間に挟む（フォームの「この後にステップを挿入」と同じ）。sl（slotAt の形）を渡すとその段に置く */
 function addNext(srcId, laneId, branch, sl){
   const s = S.flow.steps.find(x => x.id === srcId); if (!s) return;
-  const id = newStepId(), ns = { id, type: "task", lane: laneId, label: "", note: "", issue: "", next: [] };
+  const id = newStepId(), ns = { id, type: "task", lane: laneId, label: "", note: "", issue: "", ...noInfo(), next: [] };
   if (branch || s.type === "decision" || !s.next.length) s.next.push({ to: id, when: "" });
   else { ns.next = s.next; s.next = [{ to: id, when: "" }]; }
   S.flow.steps.splice(S.flow.steps.indexOf(s) + 1, 0, ns);
@@ -1190,7 +1224,7 @@ function addNext(srcId, laneId, branch, sl){
    新しいステップへ付け替えて間に挟む */
 function addPrev(dstId, laneId, branch, sl){
   const t = S.flow.steps.find(x => x.id === dstId); if (!t) return;
-  const id = newStepId(), ns = { id, type: "task", lane: laneId, label: "", note: "", issue: "", next: [{ to: dstId, when: "" }] };
+  const id = newStepId(), ns = { id, type: "task", lane: laneId, label: "", note: "", issue: "", ...noInfo(), next: [{ to: dstId, when: "" }] };
   if (!branch) layout(S.flow).edges.forEach(E => { if (E.t === t && !E.back) E.e.to = id; });
   S.flow.steps.splice(S.flow.steps.indexOf(t), 0, ns);
   if (sl) pinSlot(ns, sl.lane, sl, null);
@@ -1629,6 +1663,12 @@ function markdown(f){
   if (f.description) md += `${f.description}\n\n`;
   md += "## フロー図\n\n```mermaid\n" + mermaid(f) + "```\n\n## 手順一覧\n\n| ID | 種類 | 担当 | 内容 | 次へ | 補足 | 課題 |\n|---|---|---|---|---|---|---|\n";
   f.steps.forEach(s => md += `| ${s.id} | ${TYPES[s.type]} | ${cell(laneName(s.lane))} | ${cell(s.label)} | ${cell(s.next.map(e => e.to + (e.when ? `（${e.when}）` : "")).join("、"))} | ${cell(s.note)} | ${cell(s.issue)} |\n`);
+  // 入出力・システム：書いたステップがあるときだけ、そのステップの表を足す
+  const withInfo = f.steps.filter(hasInfo);
+  if (withInfo.length){
+    md += `\n## 入出力・システム\n\n| ID | 内容 | ${INFO.map(([, name]) => name).join(" | ")} |\n|---|---|${INFO.map(() => "---|").join("")}\n`;
+    withInfo.forEach(s => md += `| ${s.id} | ${cell(s.label)} | ${INFO.map(([k]) => cell(s[k])).join(" | ")} |\n`);
+  }
   if (f.memo.trim()) md += `\n## メモ\n\n${f.memo.trim()}\n`;
   md += "\n## 定義（YAML）\n\nこのブロックを業務フロー帳の「インポート」で取り込むと、編集を再開できます。\n\n```yaml\n" + S.yamlSrc.replace(/\n?$/, "\n") + "```\n";
   return md;
@@ -1894,7 +1934,7 @@ function pageSvg(f, L, P, links, i, o){
   s += `<g transform="translate(${ox} ${oy})">`;
   // 結合子の帯にもレーンの帯を伸ばしておく（本体は切り出した範囲の上に重なる）
   L.lanes.forEach((l, k) => { const y = L.laneY[k]; s += `<rect x="${xa}" y="${y}" width="${xb - xa}" height="${L.laneY[k + 1] - y}" fill="${k % 2 ? "var(--lane-b)" : "var(--lane-a)"}"/>`; if (k) s += `<line x1="${xa}" x2="${xb}" y1="${y}" y2="${y}" stroke="var(--line-strong)"/>`; });
-  s += `<g clip-path="url(#pg)">${diagramBodySvg(f, { ...L, edges: links.local[i] }, Math.max(L.width, 420), H, { ids: o.ids })}</g>`;
+  s += `<g clip-path="url(#pg)">${diagramBodySvg(f, { ...L, edges: links.local[i] }, Math.max(L.width, 420), H, { ids: o.ids, info: o.info })}</g>`;
   // 切れ目：前の枚・次の枚へ続くことを破線で示す
   if (cl) s += `<line x1="${p.x0}" x2="${p.x0}" y1="0" y2="${H}" stroke="var(--line-strong)" stroke-dasharray="4 4"/>`;
   if (cr) s += `<line x1="${p.x1}" x2="${p.x1}" y1="0" y2="${H}" stroke="var(--line-strong)" stroke-dasharray="4 4"/>`;
@@ -1960,13 +2000,13 @@ function svgToPng(svg, w, h, dpi){
   });
 }
 
-/* 出力画面。設定（貼る場所・文字の大きさ・見出し・ID）はこの端末で覚えておく。課題の吹き出しは、開いたときの「課題を表示」に合わせる */
+/* 出力画面。設定（貼る場所・文字の大きさ・見出し・ID）はこの端末で覚えておく。課題の吹き出し・入出力は、開いたときの「課題を表示」「入出力を表示」に合わせる */
 const IMG_KEY = "flowbook.imgExport";
 let imgOpt = null, imgPlan = null, imgUrls = [], imgPngs = [];
 function openImgDialog(){
   let o = {}; try { o = JSON.parse(lsGet(IMG_KEY) || "{}") || {}; } catch {}
-  const hasIssue = S.flow.steps.some(s => s.issue && s.issue.trim());
-  imgOpt = { size: IMG_SIZES[o.size] ? o.size : "16:9", pt: [8, 10, 12].includes(o.pt) ? o.pt : 8, title: o.title !== false, legend: !!o.legend, ids: !!o.ids, issues: S.showIssues && hasIssue };
+  const hasIssue = S.flow.steps.some(s => s.issue && s.issue.trim()), hasIn = S.flow.steps.some(hasInfo);
+  imgOpt = { size: IMG_SIZES[o.size] ? o.size : "16:9", pt: [8, 10, 12].includes(o.pt) ? o.pt : 8, title: o.title !== false, legend: !!o.legend, ids: !!o.ids, issues: S.showIssues && hasIssue, info: S.showInfo && hasIn };
   const d = $("#imgDlg");
   d.querySelectorAll("[name=imgSize]").forEach(r => { r.checked = r.value === imgOpt.size; });
   d.querySelectorAll("[name=imgPt]").forEach(r => { r.checked = +r.value === imgOpt.pt; });
@@ -1975,6 +2015,8 @@ function openImgDialog(){
   d.querySelector("[name=imgIds]").checked = imgOpt.ids;
   const iss = d.querySelector("[name=imgIssues]"); iss.checked = imgOpt.issues; iss.disabled = !hasIssue;
   iss.closest("label").title = hasIssue ? "" : "課題の書かれたステップがありません";
+  const inf = d.querySelector("[name=imgInfo]"); inf.checked = imgOpt.info; inf.disabled = !hasIn;
+  inf.closest("label").title = hasIn ? "使用システム・ツールと伝達手段を、ステップの中に入れます" : "入出力・システムの書かれたステップがありません";
   renderImgDialog();
   d.showModal();
 }
@@ -2041,6 +2083,7 @@ async function saveImgs(){
     else if (t.name === "imgLegend") imgOpt.legend = t.checked;
     else if (t.name === "imgIds") imgOpt.ids = t.checked;
     else if (t.name === "imgIssues") imgOpt.issues = t.checked;
+    else if (t.name === "imgInfo") imgOpt.info = t.checked;
     else return;
     lsSet(IMG_KEY, JSON.stringify({ size: imgOpt.size, pt: imgOpt.pt, title: imgOpt.title, legend: imgOpt.legend, ids: imgOpt.ids }));
     renderImgDialog();
