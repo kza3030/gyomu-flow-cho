@@ -76,16 +76,21 @@ steps:
       - to: s2
         when: 不備あり
   - id: s6
-    type: system
+    type: task
     lane: erp
     label: 仕訳を登録
     next: s7
   - id: s7
-    type: document
+    type: task
     lane: accounting
     label: 振込データを作成
     note: 毎月25日締め・翌月10日払い
     next: s8
+    related: d1
+  - id: d1
+    type: dataObject
+    lane: accounting
+    label: 振込データ
   - id: s8
     type: end
     lane: applicant
@@ -131,15 +136,20 @@ steps:
       - to: c5
         when: 入荷後
   - id: c5
-    type: system
+    type: task
     lane: sales
     label: 受注を登録
     next: c6
   - id: c6
-    type: document
+    type: task
     lane: warehouse
     label: 出荷指示書を発行
     next: c7
+    related: d1
+  - id: d1
+    type: document
+    lane: warehouse
+    label: 出荷指示書
   - id: c7
     type: task
     lane: warehouse
@@ -150,10 +160,15 @@ steps:
     lane: customer
     label: 商品を受領
   - id: c9
-    type: document
+    type: task
     lane: billing
     label: 請求書を発行
     next: c10
+    related: d2
+  - id: d2
+    type: document
+    lane: billing
+    label: 請求書
   - id: c10
     type: end
     lane: billing

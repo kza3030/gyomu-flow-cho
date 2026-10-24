@@ -2,6 +2,7 @@
    core/ のファイルは画面（DOM）に触らない。Node のテスト（tests/）からも読み込む */
 (() => {
 "use strict";
+const { isArtifact } = globalThis.Flowbook; // model.js
 function validate(f){
   const out = [], push = (level, msg, step) => out.push({ level, msg, step });
   const ids = new Map(); f.steps.forEach(s => ids.set(s.id, (ids.get(s.id) || 0) + 1));
@@ -17,7 +18,13 @@ function validate(f){
     if (!s.label.trim()) push("warn", `「${s.id}」に内容が書かれていません。`, s.id);
     if (!laneIds.has(s.lane)) push("bad", `「${nm}」の担当「${s.lane || "未設定"}」が担当一覧にありません。`, s.id);
     s.next.forEach(e => { if (!ids.has(e.to)) push("bad", `「${nm}」の次「${e.to}」というステップはありません。`, s.id); });
-    if (s.type !== "end" && !s.next.length) push("info", `「${nm}」の次のステップが決まっていません（行き止まり）。`, s.id);
+    (s.related || []).forEach(to => {
+      if (!ids.has(to)) push("bad", `「${nm}」の関連「${to}」というステップはありません。`, s.id);
+      else if (to === s.id) push("info", `「${nm}」の関連に自分自身が入っています。`, s.id);
+      else if (s.next.some(e => e.to === to)) push("info", `「${nm}」から「${to}」へは流れの矢印があるので、関連の点線は描きません。`, s.id);
+    });
+    // 帳票・データは流れに入らない（関連で結ぶだけ）ので、次がなくても行き止まりとしない
+    if (s.type !== "end" && !isArtifact(s) && !s.next.length) push("info", `「${nm}」の次のステップが決まっていません（行き止まり）。`, s.id);
     if (s.type === "end" && s.next.length) push("info", `終了「${nm}」の後にもステップがつながっています。`, s.id);
     if (s.type === "decision"){
       if (s.next.length < 2) push("warn", `判断「${nm}」の分岐が${s.next.length}本です。2本以上にしてください。`, s.id);
@@ -26,7 +33,10 @@ function validate(f){
   });
   if (starts.length){
     const seen = new Set(), stack = starts.map(s => s.id), byId = new Map(f.steps.map(s => [s.id, s]));
-    while (stack.length){ const id = stack.pop(); if (seen.has(id)) continue; seen.add(id); (byId.get(id)?.next || []).forEach(e => stack.push(e.to)); }
+    /* 関連（点線）は、向きを問わず帳票・データへだけたどる（流れの中で作る・使う帳票を、たどり着けないとしない）。
+       帳票・データ以外のステップへは、流れの矢印でたどり着けなければならない */
+    const rel = new Map(); f.steps.forEach(s => (s.related || []).forEach(to => { [[s.id, to], [to, s.id]].forEach(([a, b]) => { if (!rel.has(a)) rel.set(a, []); rel.get(a).push(b); }); }));
+    while (stack.length){ const id = stack.pop(); if (seen.has(id)) continue; seen.add(id); (byId.get(id)?.next || []).forEach(e => stack.push(e.to)); (rel.get(id) || []).forEach(to => { if (isArtifact(byId.get(to))) stack.push(to); }); }
     f.steps.forEach(s => { if (!seen.has(s.id)) push("warn", `「${s.label || s.id}」は開始からたどり着けません。`, s.id); });
   }
   const used = new Set(f.steps.map(s => s.lane));

@@ -3,8 +3,9 @@
   --paper:#F4F5F8; --surface:#FFFFFF; --ink:#1A2233; --muted:#5D6578; --line:#D6DAE3; --line-strong:#B1B8C8;
   --lane-a:#EDF0F6; --lane-b:#F8F9FC; --lane-head:#DFE4EE;
   --accent:#2C4F8E; --accent-ink:#FFFFFF; --accent-soft:#DCE4F3;
-  --dec:#FBF1D6; --dec-line:#A9780F; --sel:#1F6FEB;
-  --data:#E3F2EA; --data-line:#2C7647;
+  --dec:#FBF1D6; --sel:#1F6FEB;
+  /* ステップの色（任意で選ぶ。文字は --ink のまま読めるよう淡くする） */
+  --c-red:#FBE3E0; --c-orange:#FCE9D6; --c-yellow:#FAF2CC; --c-green:#E1F2E6; --c-blue:#DFEAF8; --c-purple:#ECE4F6; --c-gray:#E6E9EE;
   --warn:#A8620C; --bad:#B2352A; --good:#2C7647; --info:#3F6E8C;
   --issue-bg:#FFF8F7; --issue-line:#E2B5AF;
   --shadow:0 1px 2px rgb(26 34 51 / .06),0 4px 14px rgb(26 34 51 / .06);
@@ -16,8 +17,8 @@
   --paper:#10141C; --surface:#171D28; --ink:#E2E6EE; --muted:#939BAE; --line:#283041; --line-strong:#3C465C;
   --lane-a:#151B26; --lane-b:#121721; --lane-head:#1D2433;
   --accent:#8AA8E0; --accent-ink:#0D1526; --accent-soft:#1F2C47;
-  --dec:#322A17; --dec-line:#D8A74A; --sel:#5C9DFF;
-  --data:#16291F; --data-line:#6FC48D;
+  --dec:#322A17; --sel:#5C9DFF;
+  --c-red:#3D2427; --c-orange:#3C2C1C; --c-yellow:#37311A; --c-green:#1C3225; --c-blue:#1D2B42; --c-purple:#2C2342; --c-gray:#272C37;
   --warn:#E2A24A; --bad:#EE7A69; --good:#6FC48D; --info:#7FB2D3;
   --issue-bg:#2A1D1F; --issue-line:#7A4038;
   --shadow:0 1px 2px rgb(0 0 0 / .3),0 4px 14px rgb(0 0 0 / .25); color-scheme:dark}}
@@ -25,8 +26,8 @@
   --paper:#10141C; --surface:#171D28; --ink:#E2E6EE; --muted:#939BAE; --line:#283041; --line-strong:#3C465C;
   --lane-a:#151B26; --lane-b:#121721; --lane-head:#1D2433;
   --accent:#8AA8E0; --accent-ink:#0D1526; --accent-soft:#1F2C47;
-  --dec:#322A17; --dec-line:#D8A74A; --sel:#5C9DFF;
-  --data:#16291F; --data-line:#6FC48D;
+  --dec:#322A17; --sel:#5C9DFF;
+  --c-red:#3D2427; --c-orange:#3C2C1C; --c-yellow:#37311A; --c-green:#1C3225; --c-blue:#1D2B42; --c-purple:#2C2342; --c-gray:#272C37;
   --warn:#E2A24A; --bad:#EE7A69; --good:#6FC48D; --info:#7FB2D3;
   --issue-bg:#2A1D1F; --issue-line:#7A4038;
   --shadow:0 1px 2px rgb(0 0 0 / .3),0 4px 14px rgb(0 0 0 / .25); color-scheme:dark}
@@ -120,6 +121,7 @@ body.resizing{cursor:col-resize;user-select:none}
 .canvas svg .node:focus-visible .shape{stroke:var(--sel);stroke-width:2.5}
 /* マウスを乗せた・キーボードで選んだステップや矢印：出入りする矢印と条件ラベルを、選択時より薄めに強調する */
 .canvas svg path.edge.hv:not(.hot){stroke:var(--sel);stroke-opacity:.6;stroke-width:2;marker-end:url(#arrH)}
+.canvas svg path.edge.assoc.hv:not(.hot){marker-end:url(#oarH)}
 .canvas svg .elabel.hv rect{stroke:var(--sel)}
 .canvas .diagram{user-select:none;-webkit-user-select:none}
 /* 課題の吹き出し（「課題を表示」中）。ステップか吹き出しにマウスを乗せると両方を強調し、省いた文は co-pop で全文を出す */
@@ -165,6 +167,7 @@ body.resizing-row{cursor:row-resize;user-select:none}
 .memo-text:disabled{opacity:.6}
 .canvas svg .lane-hi{fill:var(--sel);fill-opacity:.1;stroke:var(--sel);stroke-width:2;pointer-events:none}
 .canvas svg .link-temp{fill:none;stroke:var(--sel);stroke-width:2;stroke-dasharray:6 4;pointer-events:none}
+.canvas svg .link-temp.assoc{stroke-dasharray:2 3}
 .canvas svg .drop-ghost{fill:var(--surface);fill-opacity:.75;stroke:var(--sel);stroke-width:1.5;stroke-dasharray:5 4;pointer-events:none}
 .canvas svg .drop-line{stroke:var(--sel);stroke-width:2.5;stroke-linecap:round;pointer-events:none}
 .canvas.dragging,.canvas.dragging *{cursor:grabbing!important}
@@ -174,9 +177,6 @@ body.resizing-row{cursor:row-resize;user-select:none}
 .step-tip .tt-h svg{width:14px;height:14px;flex:none}
 .step-tip .tt-b{white-space:pre-wrap;overflow-wrap:anywhere}
 .step-tip .tt-issue .tt-h{color:var(--bad)}
-.step-tip .tt-info dl{display:grid;grid-template-columns:auto 1fr;gap:1px 8px;margin:0}
-.step-tip .tt-info dt{color:var(--muted);font-size:11.5px}
-.step-tip .tt-info dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
 .step-tip .tt-sec+.tt-sec{border-top:1px dashed var(--line);padding-top:7px}
 .inline-edit{position:fixed;z-index:30;height:32px;border:2px solid var(--sel);border-radius:6px;background:var(--surface);padding:3px 8px;font-size:13px;box-shadow:var(--shadow);outline:none}
 .inline-edit.cut{border-color:var(--warn)}
@@ -235,6 +235,7 @@ textarea.inp{resize:vertical;min-height:54px}
 .ticon{width:22px;height:16px;flex:none}
 .inp.cut{border-color:var(--warn)}
 .next-row{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) auto;gap:6px;align-items:center}
+.next-row.rel-row{grid-template-columns:minmax(0,1fr) auto}
 .step-actions{display:flex;gap:6px;flex-wrap:wrap}
 .flag{width:7px;height:7px;border-radius:50%;display:inline-block}
 .flag.bad{background:var(--bad)} .flag.warn{background:var(--warn)}
@@ -245,6 +246,12 @@ textarea.inp.issue-inp{border-left:3px solid var(--bad)}
 .info-sec{border:1px solid var(--line);border-radius:8px;padding:6px 10px}
 .info-sec[open]{display:grid;gap:8px;padding-bottom:10px}
 .info-sec summary{cursor:pointer;font-size:11.5px;color:var(--muted);font-weight:500}
+.info-sec summary .peek{margin-left:8px;font-weight:400;opacity:.8}
+/* 色の見本。選んでいる色は枠を太くする */
+.swatches{display:flex;flex-wrap:wrap;gap:6px}
+.swatch{min-width:26px;height:24px;padding:0 6px;border:1px solid var(--line-strong);border-radius:6px;background:var(--surface);color:var(--muted);font:inherit;font-size:11px;cursor:pointer}
+.swatch.on{border:2px solid var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+.swatch:focus-visible{outline:2px solid var(--sel);outline-offset:1px}
 textarea.inp.info-inp{resize:vertical;min-height:0}
 
 .yaml-wrap{display:grid;gap:8px;height:100%;grid-template-rows:auto minmax(0,1fr) auto}
