@@ -16,10 +16,13 @@ function edgeLabel(t){
    gap はステップとの間。roomT / roomB は吹き出しとレーンの端の間に空ける幅（レーンの端を通る線と条件ラベルの通り道） */
 const CO = { minW: 150, maxW: 300, lines: 4, lineH: 18, font: 12, padX: 9, padY: 7, icon: 21, gap: 14, roomT: 16, roomB: 18 };
 const labelCut = t => !!t && edgeLabel(t).lines.join("") !== t;
-// ほかのステップと矢印でつながっているステップの id（自分へ戻る矢印・つなぎ先のない矢印は数えない）
+/* ステップから出る線：流れ（next）と関連（related。点線）。関連は、流れの矢印と同じ相手・自分自身へのものは描かない。
+   関連の線の e は、その場で作る { to, when: "", assoc: true, k: related の何番目か } */
+const outLinks = s => [...s.next, ...(s.related || []).flatMap((to, k) => to !== s.id && !s.next.some(e => e.to === to) ? [{ to, when: "", assoc: true, k }] : [])];
+// ほかのステップと矢印・関連の線でつながっているステップの id（自分へ戻る矢印・つなぎ先のない矢印は数えない）
 function linkedIds(f){
   const ids = new Set(f.steps.map(s => s.id)), on = new Set();
-  f.steps.forEach(s => s.next.forEach(e => { if (e.to !== s.id && ids.has(e.to)){ on.add(s.id); on.add(e.to); } }));
+  f.steps.forEach(s => outLinks(s).forEach(e => { if (e.to !== s.id && ids.has(e.to)){ on.add(s.id); on.add(e.to); } }));
   return on;
 }
 // co は課題の吹き出しの置き方（calloutPlan の結果）。渡すと、吹き出しを入れるレーンをその分だけ上下に広げて配置する。
@@ -31,17 +34,19 @@ function layout(f, co, placeOnly){
   const rowOf = s => laneIdx.has(s.lane) ? laneIdx.get(s.lane) : laneIdx.get("__none");
   const byId = new Map(); f.steps.forEach(s => { if (!byId.has(s.id)) byId.set(s.id, s); });
   const steps = [...byId.values()];
+  // 関連（点線）も、配置では流れと同じく、関連元の後ろへ相手を置く
+  const outs = new Map(steps.map(s => [s.id, outLinks(s)]));
   // detect back edges with DFS from starts, then the rest in order
   const st = {}, back = new Set();
-  const dfs = id => { st[id] = 1; for (const e of byId.get(id).next){ if (!byId.has(e.to)) continue; if (st[e.to] === 1) back.add(id + "\u0000" + e.to); else if (!st[e.to]) dfs(e.to); } st[id] = 2; };
+  const dfs = id => { st[id] = 1; for (const e of outs.get(id)){ if (!byId.has(e.to)) continue; if (st[e.to] === 1) back.add(id + "\u0000" + e.to); else if (!st[e.to]) dfs(e.to); } st[id] = 2; };
   steps.filter(s => s.type === "start").forEach(s => { if (!st[s.id]) dfs(s.id); });
   steps.forEach(s => { if (!st[s.id]) dfs(s.id); });
   const isBack = (a, b) => back.has(a + "\u0000" + b);
   // topological order on forward edges
   const indeg = new Map(steps.map(s => [s.id, 0])), preds = new Map(steps.map(s => [s.id, []]));
-  steps.forEach(s => s.next.forEach(e => { if (byId.has(e.to) && !isBack(s.id, e.to) && e.to !== s.id){ indeg.set(e.to, indeg.get(e.to) + 1); preds.get(e.to).push(s.id); } }));
+  steps.forEach(s => outs.get(s.id).forEach(e => { if (byId.has(e.to) && !isBack(s.id, e.to) && e.to !== s.id){ indeg.set(e.to, indeg.get(e.to) + 1); preds.get(e.to).push(s.id); } }));
   const q = steps.filter(s => indeg.get(s.id) === 0).map(s => s.id), order = [];
-  while (q.length){ const id = q.shift(); order.push(id); byId.get(id).next.forEach(e => { if (byId.has(e.to) && !isBack(id, e.to) && e.to !== id){ indeg.set(e.to, indeg.get(e.to) - 1); if (indeg.get(e.to) === 0) q.push(e.to); } }); }
+  while (q.length){ const id = q.shift(); order.push(id); outs.get(id).forEach(e => { if (byId.has(e.to) && !isBack(id, e.to) && e.to !== id){ indeg.set(e.to, indeg.get(e.to) - 1); if (indeg.get(e.to) === 0) q.push(e.to); } }); }
   steps.forEach(s => { if (!order.includes(s.id)) order.push(s.id); });
 
   /* columns: 同じレーンの前ステップなら次の列へ。別レーンから受け取るだけなら同じ列の真下・真上に置く。
@@ -112,12 +117,13 @@ function layout(f, co, placeOnly){
 
   /* edges: 経路の種類を決める
      straight 同じレーンを右へ / elbow すき間で折れて別レーンへ / skip レーン端を通って列を飛ばす（dskip は判断の下の頂点から）
-     vert 同じ列の別レーンへ縦に / dv 判断の上下の頂点から出て別レーンへ / loop 差し戻し（下側を通る） / self 自分へ戻る */
+     vert 同じ列の別レーンへ縦に / dv 判断の上下の頂点から出て別レーンへ / loop 前の列へ戻る（下側を通る） / self 自分へ戻る
+     assoc は関連（点線）の線。k は、流れなら next の、関連なら related の何番目か */
   const edges = [];
-  steps.forEach(s => s.next.forEach(e => {
+  steps.forEach(s => outs.get(s.id).forEach(e => {
     const t = byId.get(e.to); if (!t) return;
     const a = pos.get(s.id), b = pos.get(t.id);
-    const E = { s, t, e, a, b, back: isBack(s.id, t.id) || s.id === t.id, label: e.when ? edgeLabel(e.when) : null };
+    const E = { s, t, e, a, b, assoc: !!e.assoc, k: e.assoc ? e.k : s.next.indexOf(e), back: isBack(s.id, t.id) || s.id === t.id, label: e.when ? edgeLabel(e.when) : null };
     if (s.id === t.id) E.kind = "self";
     else if (E.back || b.c < a.c) E.kind = "loop";
     else if (b.c === a.c) E.kind = span(a.r, b.r).some(m => occ.has(key(m, a.c))) ? "loop" : "vert";
@@ -147,7 +153,7 @@ function layout(f, co, placeOnly){
   // 判断の上下の頂点から縦に出る線が通るマス
   const dvCells = new Set();
   edges.forEach(E => { if (E.kind === "dv") [...span(E.a.r, E.b.r), E.b.r].forEach(m => dvCells.add(key(m, E.a.c))); });
-  // 差し戻しを戻り先の真下から（列のすき間を回らず）上げられるか
+  // 前の列へ戻る矢印を、戻り先の真下から（列のすき間を回らず）上げられるか
   const loopDirect = E => E.b.r < E.a.r && [...span(E.a.r, E.b.r), E.a.r].every(m => free(m, E.b.c) && !dvCells.has(key(m, E.b.c)));
   edges.forEach(E => {
     const up = E.b.r < E.a.r;
@@ -161,7 +167,7 @@ function layout(f, co, placeOnly){
     if (E.e.exit) E.so = E.e.exit;
     if (E.e.entry) E.ti = E.e.entry;
   });
-  /* 差し戻しは戻り先の下へ入れるのが基本。ただし戻り先の左の辺にほかの矢印がなく、
+  /* 前の列へ戻る矢印は戻り先の下へ入れるのが基本。ただし戻り先の左の辺にほかの矢印がなく、
      左から入るほうが道のりが短ければ左へ入れる（下へ入れるために大きく回り込まないように） */
   {
     const cw = G.nodeW + G.gap, cx = c => c * cw + G.nodeW / 2, gx = c => c * cw - G.gap / 2;
@@ -177,10 +183,19 @@ function layout(f, co, placeOnly){
       if (viaLeft < viaBottom){ E.ti = "L"; E.leftIn = true; }
     });
   }
+  /* 左右の辺に並ぶ矢印は、線が来る（向かう）高さの順に並べる。レーン端の通り道を通る線はその高さで比べる
+     （同じレーンから下を回って入る線を、まっすぐ入る線より下にして交差させない） */
+  const away = (E, end) => {
+    const { a, b } = E, chB = r => bandY[r + 1] - 9;
+    if (E.kind === "dskip" || (E.kind === "skip" && a.r === b.r) || (E.leftIn && end === "t")) return chB(a.r);
+    if (E.kind === "skip") return b.r > a.r ? bandY[b.r] + 9 : chB(b.r);
+    const o = end === "s" ? b : a; return rowY[o.r] + G.nodeH / 2;
+  };
   edges.forEach(E => { if (E.so){ addPort(E.s.id, E.so, E, "s", E.b); addPort(E.t.id, E.ti, E, "t", E.a); } });
   ports.forEach((list, k) => {
     const horiz = /[TB]$/.test(k);
-    list.sort((p, q) => horiz ? (p.o.c - q.o.c) || (p.o.r - q.o.r) : (p.o.r - q.o.r) || (p.o.c - q.o.c));
+    if (!horiz) list.forEach(p => { p.y = away(p.E, p.end); });
+    list.sort((p, q) => horiz ? (p.o.c - q.o.c) || (p.o.r - q.o.r) : (p.y - q.y) || (p.o.r - q.o.r) || (p.o.c - q.o.c));
     const n = list.length, half = horiz ? G.nodeW / 2 - 22 : G.nodeH / 2 - 12, step = n > 1 ? Math.min(horiz ? 18 : 14, 2 * half / (n - 1)) : 0;
     list.forEach((p, i) => { p.E[p.end === "s" ? "oo" : "io"] = (i - (n - 1) / 2) * step; p.E[p.end === "s" ? "on" : "in"] = n; });
   });
@@ -425,7 +440,7 @@ function portAt(st, p, side, off = 0){
     let dx = 0; if (pill){ const rr = (p.h - 12) / 2; dx = rr - Math.sqrt(Math.max(0, rr * rr - off * off)); }
     return [side === "R" ? p.x + p.w - dx : p.x + dx, cy + off];
   }
-  if (st.type === "data"){ // 円柱の上下は楕円の外側の弧に合わせる
+  if (st.type === "dataStore"){ // 円柱の上下は楕円の外側の弧に合わせる
     const k = DB_RY * Math.sqrt(Math.max(0, 1 - (2 * off / p.w) ** 2));
     return [cx + off, side === "T" ? p.y + DB_RY - k : p.y + p.h - DB_RY + k];
   }

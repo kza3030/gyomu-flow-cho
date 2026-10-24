@@ -1,6 +1,6 @@
 name: 描画パターン確認用：備品・サービス購買フロー
 owner: サンプル
-description: 直進・折れ線・列飛ばし・上下の頂点からの分岐・差し戻し（同じ担当／別の担当）・自分へ戻る・並行処理と合流・長い条件ラベル・複数の終了を一通り含むサンプル
+description: 直進・折れ線・列飛ばし・上下の頂点からの分岐・差し戻し（同じ担当／別の担当）・自分へ戻る・並行処理と合流・長い条件ラベル・複数の終了・帳票への関連（点線）を一通り含むサンプル
 lanes:
   - id: applicant
     name: 申請者
@@ -26,7 +26,7 @@ steps:
     label: 申請内容を作成
     next: a3
   - id: a3
-    type: system
+    type: task
     lane: applicant
     label: 購買システムに申請登録
     note: 別の担当へ折れて進む矢印（elbow）
@@ -87,10 +87,15 @@ steps:
     label: 取引先へ見積を依頼
     next: v1
   - id: v1
-    type: document
+    type: task
     lane: vendor
     label: 見積書を提出
     next: p3
+    related: d1
+  - id: d1
+    type: document
+    lane: vendor
+    label: 見積書
   - id: p3
     type: decision
     lane: purchasing
@@ -112,18 +117,23 @@ steps:
       - to: p4
         when: 確認できた
   - id: p4
-    type: document
+    type: task
     lane: purchasing
     label: 発注書を発行
     note: 並行処理の開始（取引先と経理へ同時に進む）
     next: [v2, k1]
+    related: d2
+  - id: d2
+    type: document
+    lane: purchasing
+    label: 発注書
   - id: v2
     type: task
     lane: vendor
     label: 出荷準備・納品
     next: p6
   - id: k1
-    type: system
+    type: task
     lane: accounting
     label: 予算を引き当て
     next: k3
@@ -142,7 +152,7 @@ steps:
       - to: v2
         when: 不合格（再納品）
   - id: k3
-    type: document
+    type: task
     lane: accounting
     label: 請求書を受領・照合
     note: 並行処理の合流（予算引当と検収の両方を待つ）
@@ -157,12 +167,12 @@ steps:
       - to: v3
         when: 不一致
   - id: v3
-    type: document
+    type: task
     lane: vendor
     label: 請求書を再発行
     next: k3
   - id: k5
-    type: system
+    type: task
     lane: accounting
     label: 支払いを実行
     next: [e1, e2]
