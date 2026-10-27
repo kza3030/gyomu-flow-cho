@@ -3,7 +3,8 @@
 (() => {
 "use strict";
 const { isArtifact } = globalThis.Flowbook; // model.js
-function validate(f){
+/* ctx.base：比較元（AsIs）の今の版。渡すと、写しの後に ToBe と比較元の両方で別々に足した同じ ID を知らせる */
+function validate(f, ctx = {}){
   const out = [], push = (level, msg, step) => out.push({ level, msg, step });
   const ids = new Map(); f.steps.forEach(s => ids.set(s.id, (ids.get(s.id) || 0) + 1));
   const laneIds = new Map(); f.lanes.forEach(l => laneIds.set(l.id, (laneIds.get(l.id) || 0) + 1));
@@ -34,6 +35,20 @@ function validate(f){
     const rel = new Map(); f.steps.forEach(s => (s.related || []).forEach(to => { [[s.id, to], [to, s.id]].forEach(([a, b]) => { if (!rel.has(a)) rel.set(a, []); rel.get(a).push(b); }); }));
     while (stack.length){ const id = stack.pop(); if (seen.has(id)) continue; seen.add(id); (byId.get(id)?.next || []).forEach(e => stack.push(e.to)); (rel.get(id) || []).forEach(to => { if (isArtifact(byId.get(to))) stack.push(to); }); }
     f.steps.forEach(s => { if (!seen.has(s.id)) push("warn", `「${s.label || s.id}」は開始からたどり着けません。`, s.id); });
+  }
+  // AsIs／ToBe の比較（compare・from・removed）
+  const snapIds = f.compare ? new Set(f.compare.snapshot.steps.map(s => s.id)) : null;
+  f.steps.forEach(s => (s.from || []).forEach(id => {
+    if (!snapIds) push("info", `「${s.label || s.id}」に AsIs の対応（from）がありますが、比較元が決まっていないので使われません。`, s.id);
+    else if (!snapIds.has(id)) push("warn", `「${s.label || s.id}」の AsIs の対応「${id}」は、比較元の写しにありません。`, s.id);
+  }));
+  (f.removed || []).forEach(r => {
+    if (ids.has(r.id)) push("info", `削除の理由に書いた「${r.id}」が、このフローにあります（削除していないなら、理由は使われません）。`, r.id);
+    else if (snapIds && !snapIds.has(r.id)) push("info", `削除の理由に書いた「${r.id}」は、比較元の写しにありません。`);
+  });
+  if (snapIds && ctx.base){
+    const cur = new Set(ctx.base.steps.map(s => s.id));
+    f.steps.forEach(s => { if (!snapIds.has(s.id) && cur.has(s.id)) push("bad", `ステップID「${s.id}」が、比較元でも別に足されています。別のステップを同じものとして比べてしまうので、どちらかの ID を変えてください。`, s.id); });
   }
   const rank = { bad: 0, warn: 1, info: 2 };
   return out.sort((a, b) => rank[a.level] - rank[b.level]);

@@ -39,6 +39,7 @@
         <hr>
         <button data-exp="save-yaml">YAMLファイルとして保存（.yaml）</button>
         <button data-exp="save-md">手順書として保存（.md）<small>フロー図・ステップ一覧・YAML定義をまとめた1ファイル</small></button>
+        <button data-exp="save-cmp" id="expCmp" hidden>比較レポートとして保存（.md）<small>AsIs との変化点の一覧と、差分の色を付けた図</small></button>
       </div>
     </div>
   </header>
@@ -56,7 +57,7 @@
         <button class="btn ghost sm" data-new="order">受注〜出荷・請求</button>
         <p class="store-note" id="storeNote"></p>
         <!-- アプリのバージョン。修正のたびに更新する（ルールは AGENTS.md） -->
-        <p class="ver" title="業務フロー帳のバージョン">v2.4.0</p>
+        <p class="ver" title="業務フロー帳のバージョン">v2.7.0</p>
       </div>
     </aside>
     <div class="splitter" id="splitSide" role="separator" aria-orientation="vertical" aria-label="フロー一覧の幅（ダブルクリックで元に戻す）" title="ドラッグで幅を変更・ダブルクリックで元に戻す" tabindex="0"></div>
@@ -94,6 +95,19 @@
         <button class="btn sm" id="focusBtn" aria-pressed="false" title="フロー一覧と編集エリア・メモを隠して、図を広く表示します">図だけ表示</button>
         <p class="canvas-hint" id="canvasHint" hidden></p>
       </div>
+      <!-- AsIs／ToBe の比較の操作。比較元のある ToBe のときだけ、図のすぐ上に帯で出す（表示・並べる向き・薄くするか・差分の数・AsIs の更新） -->
+      <div class="cmp-bar" id="cmpBar" role="toolbar" aria-label="AsIs との比較" hidden>
+        <span class="cmp-title"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="3" width="5" height="10" rx="1.5"/><rect x="9.5" y="3" width="5" height="10" rx="1.5"/><path d="M6.5 8h3"/></svg><span id="cmpTitle">AsIs と比較</span></span>
+        <span class="cmp-grp"><span class="cmp-lbl" id="cmpViewLbl">表示</span><span class="segbar" role="radiogroup" aria-labelledby="cmpViewLbl">
+          <label title="差分を出さない"><input type="radio" name="cmpView" value="off">なし</label><label title="ToBe の図に、AsIs から変わったところを色で示す"><input type="radio" name="cmpView" value="overlay">変更箇所</label><label title="AsIs と ToBe を並べる"><input type="radio" name="cmpView" value="split">並べる</label>
+        </span></span>
+        <span class="cmp-grp" id="cmpOrientGrp"><span class="cmp-lbl" id="cmpOrientLbl">向き</span><span class="segbar" role="radiogroup" aria-labelledby="cmpOrientLbl">
+          <label title="左右に並べる"><input type="radio" name="cmpOrient" value="lr"><svg viewBox="0 0 16 12" aria-hidden="true"><rect x=".75" y=".75" width="6" height="10.5" rx="1"/><rect x="9.25" y=".75" width="6" height="10.5" rx="1"/></svg>左右</label><label title="上下に並べる"><input type="radio" name="cmpOrient" value="tb"><svg viewBox="0 0 16 12" aria-hidden="true"><rect x="2" y=".75" width="12" height="4.5" rx="1"/><rect x="2" y="6.75" width="12" height="4.5" rx="1"/></svg>上下</label>
+        </span></span>
+        <label class="chk-pill" id="cmpDimL" title="差分を見やすくするため、AsIs から変わらないステップを薄く表示します"><input type="checkbox" id="cmpDim">変わらない所を薄く</label>
+        <span class="dleg" id="cmpLegend"></span>
+        <button class="btn sm" id="cmpUpd" hidden title="ToBe を作った後に AsIs が変わりました">AsIs 更新<span class="cnt"></span></button>
+      </div>
       <div class="canvas" id="canvas"></div>
       <!-- フロー全体のメモ。見出しで開け閉めし、上の境目をドラッグで高さを変える（どちらもこの端末で覚えておく） -->
       <div class="memo" id="memo" hidden>
@@ -112,6 +126,7 @@
         <button role="tab" data-tab="edit" aria-selected="true">ステップ</button>
         <button role="tab" data-tab="yaml" aria-selected="false">YAML</button>
         <button role="tab" data-tab="check" aria-selected="false">チェック <span class="count" id="issueCount">0</span></button>
+        <button role="tab" data-tab="cmp" aria-selected="false">比較 <span class="count" id="cmpCount">0</span></button>
         <button role="tab" data-tab="hist" aria-selected="false">履歴</button>
       </div>
       <div class="tabpanel" id="tab-edit"></div>
@@ -124,6 +139,7 @@
         </div>
       </div>
       <div class="tabpanel" id="tab-check" hidden></div>
+      <div class="tabpanel" id="tab-cmp" hidden></div>
       <div class="tabpanel" id="tab-hist" hidden></div>
     </section>
   </div>
@@ -149,6 +165,7 @@
         <label><input type="checkbox" name="imgLegend">凡例</label>
         <label><input type="checkbox" name="imgIssues">課題の吹き出し</label>
         <label><input type="checkbox" name="imgInfo">ツール・手段</label>
+        <label hidden><input type="checkbox" name="imgDiff">AsIs との差分</label>
       </div></fieldset>
     </div>
     <div class="img-note">
@@ -163,6 +180,7 @@
 <script src="js/core/templates.js"></script>
 <script src="js/core/model.js"></script>
 <script src="js/core/validation.js"></script>
+<script src="js/core/diff.js"></script>
 <script src="js/core/layout.js"></script>
 <script src="js/state.js"></script>
 <script src="js/app.js"></script>

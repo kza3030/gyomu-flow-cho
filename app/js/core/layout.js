@@ -197,7 +197,16 @@ function layout(f, co, placeOnly){
     if (!horiz) list.forEach(p => { p.y = away(p.E, p.end); });
     list.sort((p, q) => horiz ? (p.o.c - q.o.c) || (p.o.r - q.o.r) : (p.y - q.y) || (p.o.r - q.o.r) || (p.o.c - q.o.c));
     const n = list.length, half = horiz ? G.nodeW / 2 - 22 : G.nodeH / 2 - 12, step = n > 1 ? Math.min(horiz ? 18 : 14, 2 * half / (n - 1)) : 0;
-    list.forEach((p, i) => { p.E[p.end === "s" ? "oo" : "io"] = (i - (n - 1) / 2) * step; p.E[p.end === "s" ? "on" : "in"] = n; });
+    /* 位置を指定した端（exitAt・entryAt）はその位置に置き、並べる枠のうちいちばん近いものをふさぐ。
+       ほかの端は、残った枠に順に置く（指定した端と重ならないように） */
+    const slots = list.map((p, i) => (i - (n - 1) / 2) * step), at = p => p.E.e[p.end === "s" ? "exitAt" : "entryAt"];
+    list.forEach(p => {
+      if (at(p) == null) return;
+      p.off = atOff(p.end === "s" ? p.E.s : p.E.t, p.end === "s" ? p.E.so : p.E.ti, at(p)); p.E[p.end === "s" ? "fo" : "fi"] = true;
+      let j = 0; slots.forEach((v, i) => { if (Math.abs(v - p.off) < Math.abs(slots[j] - p.off)) j = i; }); slots.splice(j, 1);
+    });
+    list.filter(p => at(p) == null).forEach((p, i) => { p.off = slots[i]; });
+    list.forEach(p => { p.E[p.end === "s" ? "oo" : "io"] = p.off; p.E[p.end === "s" ? "on" : "in"] = n; });
   });
   edges.forEach(E => { if (E.so){ E.sy = portAt(E.s, E.a, E.so, E.oo)[1]; E.ty = portAt(E.t, E.b, E.ti, E.io)[1]; } });
 
@@ -255,7 +264,7 @@ function layout(f, co, placeOnly){
      どちらかの箱の出入り口を、その縦線が伸びる向きへ少しずらす（その辺に矢印が1本だけのときに限る） */
   const portOf = (t, k) => t.role === "x" ? (k ? (t.E.kind === "elbow" ? "t" : null) : "s") : t.role === "n" ? (k ? "t" : (t.E.kind === "straight" ? "s" : null)) : null;
   const nudge = (t, k) => {
-    const end = portOf(t, k); if (!end || t.E[end === "s" ? "on" : "in"] !== 1) return false;
+    const end = portOf(t, k); if (!end || t.E[end === "s" ? "on" : "in"] !== 1 || t.E[end === "s" ? "fo" : "fi"]) return false;
     const y = k ? t.y2 : t.y1, dir = Math.sign((k ? t.y1 : t.y2) - y); if (!dir) return false;
     const o = end === "s" ? "oo" : "io", lim = G.nodeH / 2 - 10;
     t.E[o] = Math.max(-lim, Math.min(lim, t.E[o] + dir * 10));
@@ -427,6 +436,15 @@ function calloutPlan(L){
 }
 const DB_RY = 8; // データ（円柱）の上下の楕円の縦の半径
 const topY = (st, p) => p.y + (st.type === "decision" ? -6 : (st.type === "start" || st.type === "end") ? 6 : 0);
+/* 辺の中で矢印を出し入れできる範囲（辺の中央からのずれの最大）。左右の辺は上下の端を、上下の辺は角と判断の左右の頂点の近くを避ける。
+   開始・終了の上下の辺は、両端の丸みにかからない所まで */
+function portSpan(st, side){
+  if (side === "L" || side === "R") return G.nodeH / 2 - 8;
+  return G.nodeW / 2 - (st.type === "start" || st.type === "end" ? (G.nodeH - 12) / 2 + 2 : 10);
+}
+// 辺の位置（exitAt・entryAt の 0〜100）と、辺の中央からのずれ（portAt の off）の変換
+const atOff = (st, side, at) => (at / 50 - 1) * portSpan(st, side);
+const offAt = (st, side, off) => Math.max(0, Math.min(100, (off / portSpan(st, side) + 1) * 50));
 // 図形の辺上の点。side は R/L/T/B、off は辺の中央からのずれ
 function portAt(st, p, side, off = 0){
   const cx = p.x + p.w / 2, cy = p.y + p.h / 2, lr = side === "R" || side === "L";
@@ -490,5 +508,5 @@ function wrapLabel(t, per = 9, max = 3){
   return lines;
 }
 
-Object.assign(globalThis.Flowbook ??= {}, { G, LB, CO, DB_RY, textW, edgeLabel, labelCut, linkedIds, layout, calloutPlan, topY, portAt, placeLabel, wrapText, wrapLabel });
+Object.assign(globalThis.Flowbook ??= {}, { G, LB, CO, DB_RY, textW, edgeLabel, labelCut, linkedIds, layout, calloutPlan, topY, portSpan, atOff, offAt, portAt, placeLabel, wrapText, wrapLabel });
 })();

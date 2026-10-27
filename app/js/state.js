@@ -25,6 +25,7 @@ const s = {
   flow: null,           // 読み込んだフロー（model.js の normalize の形）
   yamlSrc: "",          // flow の YAML（保存するのはこちら）
   issues: [],           // flow のチェックの結果（validate）
+  cmp: null,            // flow が ToBe のとき、比較元（AsIs）との比較の結果 { base: 今の比較元（見つからなければ null）, d: 写しとの差分（diffFlows）, ups: 写しの後の比較元の更新（updatesSince） }
   selected: null,       // 選んだステップの ID
   selEdge: null,        // 図の上で選んだ矢印 { sid: つなぎ元のステップ, k: next の何番目か }。ステップの選択とは同時に持たない
   /* 保存 */
@@ -40,6 +41,10 @@ const s = {
   lastL: null,          // 最後に描いた図の配置（図の上でのドラッグ操作で使う）
   showIssues: false,    // 課題を吹き出しで常に表示する（この端末で覚えておく）
   showInfo: false,      // 使用システム・ツール・手段をステップの箱の中に表示する（この端末で覚えておく）
+  cmpView: "overlay",   // ToBe の比較の表示：off＝出さない / overlay＝図に変更箇所を色で示す / split＝AsIs と並べる（この端末で覚えておく）
+  cmpOrient: "lr",      // 並べる向き：lr＝左右 / tb＝上下（この端末で覚えておく）
+  cmpDim: true,         // 差分を出すとき、変わらないステップを薄くする（この端末で覚えておく）
+  refNow: false,        // 並べるとき、AsIs 側に写しではなく今の比較元を出す
 };
 
 // 読むための窓口。どのフィールドにも書き込み口を付けないので、代入すると（"use strict" のもとでは）エラーになる
@@ -70,6 +75,11 @@ const setTab = v => { s.tab = v; };
 const setLastL = v => { s.lastL = v; };
 const setShowIssues = v => { s.showIssues = v; };
 const setShowInfo = v => { s.showInfo = v; };
+const setCmp = v => { s.cmp = v; };
+const setCmpView = v => { s.cmpView = v; };
+const setCmpOrient = v => { s.cmpOrient = v; };
+const setCmpDim = v => { s.cmpDim = v; };
+const setRefNow = v => { s.refNow = v; };
 
 /* フローの一覧（records）。ここで変えるのはメモリの上だけ。ファイルから消すのは app.js の removeRecord */
 const setRecord = (id, rec) => { s.records.set(id, rec); };
@@ -103,8 +113,9 @@ function takeUndo(redo){
 Object.assign(globalThis.Flowbook ??= {}, {
   state,
   setStore, setDir, setHistDir, setLastDir, setPendingCreate, setFirstRecords, setConflictId, setBroken, setScanning,
-  setCurrentId, setFlow, setYamlSrc, setIssues, setSelected, setSelEdge,
+  setCurrentId, setFlow, setYamlSrc, setIssues, setCmp, setSelected, setSelEdge,
   setDirty, setSaving, setAgain, setSaveTimer, setZoom, setTab, setLastL, setShowIssues, setShowInfo,
+  setCmpView, setCmpOrient, setCmpDim, setRefNow,
   setRecord, forgetRecord, clearRecords, setFileMeta, forgetFileMeta, clearFileMeta, markUnexported, markExported, clearUnexported,
   pushUndo, resetUndo, takeUndo
 });
