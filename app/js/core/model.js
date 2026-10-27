@@ -26,14 +26,17 @@ const SIDES = { top: "T", bottom: "B", left: "L", right: "R" };
 const SIDE_NAME = { T: "上", B: "下", L: "左", R: "右" };
 const sideIn = v => { const t = String(v ?? "").trim(); return SIDES[t.toLowerCase()] || ({ 上: "T", 下: "B", 左: "L", 右: "R" })[t] || (/^[TBLR]$/.test(t) ? t : ""); };
 const sideOut = c => Object.keys(SIDES).find(k => SIDES[k] === c);
+/* 辺のどこから出る（exitAt）・どこへ入る（entryAt）か。辺の端から端を 0〜100 で表す（上下の辺は左端が 0、左右の辺は上端が 0。50 が真ん中）。
+   辺を指定したとき（exit・entry）だけ書ける。省くと、同じ辺に出入りするほかの矢印と並べて自動で決める */
+const atIn = v => { const n = parseFloat(v); return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : null; };
 function normNext(n){
   if (n == null || n === "") return [];
   if (!Array.isArray(n)) n = [n];
   return n.map(x => {
     if (!x || typeof x !== "object") return { to: String(x), when: "" };
     const e = { to: String(x.to ?? ""), when: x.when != null ? String(x.when) : "" }, ex = sideIn(x.exit), en = sideIn(x.entry);
-    if (ex) e.exit = ex;
-    if (en) e.entry = en;
+    if (ex){ e.exit = ex; const a = atIn(x.exitAt); if (a != null) e.exitAt = a; }
+    if (en){ e.entry = en; const a = atIn(x.entryAt); if (a != null) e.entryAt = a; }
     return e;
   }).filter(e => e.to);
 }
@@ -80,6 +83,7 @@ function toArtifact(f, id, type){
       if (p.id === out.to || p.next.some(o => o.to === out.to)) return false;
       e.to = out.to;
       if (out.entry) e.entry = out.entry; else delete e.entry;
+      if (out.entryAt != null) e.entryAt = out.entryAt; else delete e.entryAt;
       return true;
     });
     if (!(p.related ||= []).includes(x.id) && !(x.related || []).includes(p.id)) p.related.push(x.id);
@@ -87,40 +91,99 @@ function toArtifact(f, id, type){
   x.next = [];
   return true;
 }
+/* AsIs／ToBe の比較。変更の種類（change.kind）：ECRS（廃止・統合・入替・簡素化）と、自動化・システム化・移管・その他。
+   [YAML のキー]: 画面の名前。色と同じく日本語の名前でも書ける。知らない種類は「その他」として読む */
+const KINDS = { eliminate: "廃止", combine: "統合", rearrange: "入替", simplify: "簡素化", automate: "自動化", systemize: "システム化", transfer: "移管", other: "その他" };
+const kindIn = v => { const t = String(v ?? "").trim(); if (!t) return ""; return KINDS[t.toLowerCase()] ? t.toLowerCase() : Object.keys(KINDS).find(k => KINDS[k] === t) || "other"; };
+// change：ToBe のステップを AsIs からどう・なぜ変えたか（任意）。種類も理由もなければ持たない
+function changeIn(c){
+  if (!c || typeof c !== "object") return null;
+  const o = {}, k = kindIn(c.kind), r = c.reason != null ? String(c.reason) : "";
+  if (k) o.kind = k;
+  if (r.trim()) o.reason = r;
+  return o.kind || o.reason ? o : null;
+}
+const changeOut = c => { const o = {}; if (c.kind) o.kind = c.kind; if (c.reason) o.reason = c.reason; return o; };
+// フローの ID（id）：名前やファイル名を変えても変わらない。ToBe が比較元（compare.base）を指すのに使う
+const newFlowId = () => "f" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+function normStep(s, i){
+  const st = { id: String(s.id ?? ("s" + (i + 1))), type: typeIn(s.type), lane: String(s.lane ?? ""), label: String(s.label ?? ""), note: s.note != null ? String(s.note) : "", issue: s.issue != null ? String(s.issue) : "" };
+  st.tool = [s.tool, s.channel].map(v => v != null ? String(v).trim() : "").filter(Boolean).join(" ／ ");
+  const old = OLD_INFO.filter(([k]) => s[k] != null && String(s[k]).trim()).map(([k, name]) => `${name}：${String(s[k]).trim()}`);
+  if (old.length) st.note = [st.note.replace(/\s+$/, ""), ...old].filter(Boolean).join("\n");
+  const c = colorIn(s.color); if (c) st.color = c;
+  st.next = normNext(s.next);
+  st.related = normRelated(s.related);
+  // col: 図で左から何列目に置くか（1 始まり）。省くと自動で決める
+  if (Number.isInteger(+s.col) && +s.col >= 1) st.col = +s.col;
+  // row: レーンの中で上から何段目に置くか（1 始まり。中身のない段は詰めて描く）。省くと自動で決める
+  if (Number.isInteger(+s.row) && +s.row >= 1) st.row = +s.row;
+  // from：ToBe のステップが、比較元（AsIs）のどのステップにあたるか。ID が同じなら書かなくてよい（統合・分割・置き換えのときに書く）
+  const from = normRelated(s.from); if (from.length) st.from = from;
+  const ch = changeIn(s.change); if (ch) st.change = ch;
+  return st;
+}
+function normLanes(lanes){
+  if (!Array.isArray(lanes)) throw new Error("lanes は「- id: … / name: …」の並びで書いてください。");
+  const out = [];
+  lanes.forEach((l, i) => {
+    if (typeof l === "string") out.push({ id: l, name: l });
+    else if (l && typeof l === "object") out.push({ id: String(l.id ?? ("lane" + (i + 1))), name: String(l.name ?? l.id ?? ("担当" + (i + 1))) });
+  });
+  return out;
+}
+function normSteps(steps){
+  if (!Array.isArray(steps)) throw new Error("steps は「- id: …」の並びで書いてください。");
+  return steps.map((s, i) => s && typeof s === "object" ? normStep(s, i) : null).filter(Boolean);
+}
+/* compare：このフローを ToBe として、比較元（AsIs）と比べるための情報。
+   base＝比較元のフローの id / at＝写しを取った（最後に取り込んだ）日時 / snapshot＝その時点の比較元の lanes・steps（写し）。
+   比べる相手は写しなので、後から比較元を直しても ToBe の変化点は変わらない */
+function normCompare(c){
+  if (!c || typeof c !== "object" || Array.isArray(c) || c.base == null || String(c.base).trim() === "") return null;
+  const snap = c.snapshot && typeof c.snapshot === "object" ? c.snapshot : {};
+  const o = { base: String(c.base).trim(), at: c.at != null ? (c.at instanceof Date ? c.at.toISOString() : String(c.at)) : "", snapshot: { lanes: normLanes(snap.lanes ?? []), steps: normSteps(snap.steps ?? []) } };
+  artifactLinks(o.snapshot);
+  return o;
+}
+// removed：比較元から削除したステップの、変更の種類と理由（任意）。ToBe にはそのステップがないので、ここに書く
+function normRemoved(r){
+  if (!Array.isArray(r)) r = r != null && r !== "" ? [r] : [];
+  const seen = new Set(), out = [];
+  r.forEach(x => {
+    const id = String(x && typeof x === "object" ? x.id ?? "" : x ?? "").trim();
+    if (!id || seen.has(id)) return; seen.add(id);
+    out.push({ id, ...(changeIn(x) || {}) });
+  });
+  return out;
+}
 function normalize(raw){
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("先頭は name: / lanes: / steps: を持つ形にしてください。");
-  const f = { name: String(raw.name ?? "無題のフロー"), owner: raw.owner != null ? String(raw.owner) : "", description: raw.description != null ? String(raw.description) : "", lanes: [], steps: [], memo: raw.memo != null ? String(raw.memo) : "" };
-  const lanes = raw.lanes ?? [], steps = raw.steps ?? [];
-  if (!Array.isArray(lanes)) throw new Error("lanes は「- id: … / name: …」の並びで書いてください。");
-  if (!Array.isArray(steps)) throw new Error("steps は「- id: …」の並びで書いてください。");
-  lanes.forEach((l, i) => {
-    if (typeof l === "string") f.lanes.push({ id: l, name: l });
-    else if (l && typeof l === "object") f.lanes.push({ id: String(l.id ?? ("lane" + (i + 1))), name: String(l.name ?? l.id ?? ("担当" + (i + 1))) });
-  });
-  steps.forEach((s, i) => {
-    if (!s || typeof s !== "object") return;
-    const st = { id: String(s.id ?? ("s" + (i + 1))), type: typeIn(s.type), lane: String(s.lane ?? ""), label: String(s.label ?? ""), note: s.note != null ? String(s.note) : "", issue: s.issue != null ? String(s.issue) : "" };
-    st.tool = [s.tool, s.channel].map(v => v != null ? String(v).trim() : "").filter(Boolean).join(" ／ ");
-    const old = OLD_INFO.filter(([k]) => s[k] != null && String(s[k]).trim()).map(([k, name]) => `${name}：${String(s[k]).trim()}`);
-    if (old.length) st.note = [st.note.replace(/\s+$/, ""), ...old].filter(Boolean).join("\n");
-    const c = colorIn(s.color); if (c) st.color = c;
-    st.next = normNext(s.next);
-    st.related = normRelated(s.related);
-    // col: 図で左から何列目に置くか（1 始まり）。省くと自動で決める
-    if (Number.isInteger(+s.col) && +s.col >= 1) st.col = +s.col;
-    // row: レーンの中で上から何段目に置くか（1 始まり。中身のない段は詰めて描く）。省くと自動で決める
-    if (Number.isInteger(+s.row) && +s.row >= 1) st.row = +s.row;
-    f.steps.push(st);
-  });
+  const f = { name: String(raw.name ?? "無題のフロー"), owner: raw.owner != null ? String(raw.owner) : "", description: raw.description != null ? String(raw.description) : "", lanes: normLanes(raw.lanes ?? []), steps: normSteps(raw.steps ?? []), memo: raw.memo != null ? String(raw.memo) : "" };
+  if (raw.id != null && String(raw.id).trim()) f.id = String(raw.id).trim();
+  const removed = normRemoved(raw.removed); if (removed.length) f.removed = removed;
+  const cmp = normCompare(raw.compare); if (cmp) f.compare = cmp;
   artifactLinks(f);
   return f;
 }
 function toPlain(f){
-  const o = { name: f.name };
+  const o = {};
+  if (f.id) o.id = f.id;
+  o.name = f.name;
   if (f.owner) o.owner = f.owner;
   if (f.description) o.description = f.description;
-  o.lanes = f.lanes.map(l => ({ id: l.id, name: l.name }));
-  o.steps = f.steps.map(s => {
+  o.lanes = lanesPlain(f.lanes);
+  o.steps = stepsPlain(f.steps);
+  if (f.removed?.length) o.removed = f.removed.map(r => ({ id: r.id, ...changeOut(r) }));
+  // memo：フロー全体についての自由なメモ（図の下の欄）。長くなりやすいので最後に書く
+  if (f.memo) o.memo = f.memo;
+  // compare：写し（snapshot）はフロー 1 つ分の長さがあるので、メモよりさらに後ろに書く
+  if (f.compare) o.compare = { base: f.compare.base, ...(f.compare.at ? { at: f.compare.at } : {}), snapshot: { lanes: lanesPlain(f.compare.snapshot.lanes), steps: stepsPlain(f.compare.snapshot.steps) } };
+  return o;
+}
+const lanesPlain = lanes => lanes.map(l => ({ id: l.id, name: l.name }));
+function stepsPlain(steps){
+  return steps.map(s => {
     const r = { id: s.id, type: s.type, lane: s.lane };
     if (s.col) r.col = s.col;
     if (s.row) r.row = s.row;
@@ -135,21 +198,22 @@ function toPlain(f){
         const o = { to: e.to };
         if (e.when) o.when = e.when;
         if (e.exit) o.exit = sideOut(e.exit);
+        if (e.exit && e.exitAt != null) o.exitAt = e.exitAt;
         if (e.entry) o.entry = sideOut(e.entry);
+        if (e.entry && e.entryAt != null) o.entryAt = e.entryAt;
         return o;
       });
     }
     if (s.related?.length) r.related = s.related.length === 1 ? s.related[0] : s.related.slice();
+    if (s.from?.length) r.from = s.from.length === 1 ? s.from[0] : s.from.slice();
+    if (s.change) r.change = changeOut(s.change);
     return r;
   });
-  // memo：フロー全体についての自由なメモ（図の下の欄）。長くなりやすいので最後に書く
-  if (f.memo) o.memo = f.memo;
-  return o;
 }
 const toYaml = f => jsyaml.dump(toPlain(f), { lineWidth: -1, noRefs: true });
 function parseYaml(text){ return normalize(jsyaml.load(text)); }
 
 function uid(prefix, taken){ let n = 1; while (taken.has(prefix + n)) n++; return prefix + n; }
 
-Object.assign(globalThis.Flowbook ??= {}, { TYPES, typeIn, TOOL_NAME, hasTool, COLORS, colorIn, colorable, SIDES, SIDE_NAME, sideIn, sideOut, normNext, normRelated, ARTIFACT, isArtifact, artifactLinks, toArtifact, normalize, toPlain, toYaml, parseYaml, uid });
+Object.assign(globalThis.Flowbook ??= {}, { TYPES, typeIn, KINDS, kindIn, newFlowId, TOOL_NAME, hasTool, COLORS, colorIn, colorable, SIDES, SIDE_NAME, sideIn, sideOut, atIn, normNext, normRelated, ARTIFACT, isArtifact, artifactLinks, toArtifact, normalize, toPlain, toYaml, parseYaml, uid });
 })();

@@ -4,16 +4,17 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const {
   TEMPLATES,
-  TYPES, TOOL_NAME, hasTool, COLORS, colorable, SIDES, sideIn, sideOut, normNext, isArtifact, artifactLinks, toArtifact, normalize, toYaml, parseYaml, uid,
+  TYPES, TOOL_NAME, hasTool, COLORS, colorable, SIDES, sideIn, sideOut, normNext, isArtifact, artifactLinks, toArtifact, normalize, toYaml, parseYaml, uid, KINDS, newFlowId,
   validate,
-  G, LB, CO, DB_RY, textW, edgeLabel, labelCut, linkedIds, layout, calloutPlan, topY, portAt, placeLabel, wrapText, wrapLabel
+  DIFF_FIELDS, UPDATE_FIELDS, diffFlows, updatesSince, resolveUpdate, makeToBe, toBeName, setBase, familyIds,
+  G, LB, CO, DB_RY, textW, edgeLabel, labelCut, linkedIds, layout, calloutPlan, topY, atOff, offAt, portAt, placeLabel, wrapText, wrapLabel
 } = Flowbook; // js/core/ の各ファイルで定義
 // 共有の状態（js/state.js）。読むのは S.〇〇、変えるのは下の関数だけ（S.〇〇 = … はエラーになる）
 const {
   state: S,
   setStore, setDir, setHistDir, setLastDir, setPendingCreate, setFirstRecords, setConflictId, setBroken, setScanning,
-  setCurrentId, setFlow, setYamlSrc, setIssues, setSelected, setSelEdge,
-  setDirty, setSaving, setAgain, setSaveTimer, setZoom, setTab, setLastL, setShowIssues, setShowInfo,
+  setCurrentId, setFlow, setYamlSrc, setIssues, setCmp, setSelected, setSelEdge,
+  setDirty, setSaving, setAgain, setSaveTimer, setZoom, setTab, setLastL, setShowIssues, setShowInfo, setCmpView, setCmpOrient, setCmpDim, setRefNow,
   setRecord, forgetRecord, clearRecords, setFileMeta, forgetFileMeta, clearFileMeta, markUnexported, markExported, clearUnexported,
   pushUndo, resetUndo, takeUndo
 } = Flowbook;
@@ -119,18 +120,35 @@ function edgePlusAt(E){
   for (const r of [0.5, 0.35, 0.65, 0.25, 0.75]){ const q = alongPts(E.pts, r); if (off(q)) return q; }
   return alongPts(E.pts, 0.5);
 }
+/* AsIs との差分の色と札。枠はステップの色（color）と重ならないよう、図形の外側に線で描く */
+const DIFF_COLOR = { add: "--good", rep: "--warn", chg: "--warn", repsrc: "--warn", move: "--info", del: "--bad" };
+const DIFF_BADGE = { add: "追加", rep: "置換", chg: "変更", repsrc: "置換", move: "移動", del: "削除" };
+function diffMarkSvg(st, moved, p, type){
+  const dec = type === "decision" ? 6 : 0, c = `var(${DIFF_COLOR[st]})`;
+  let g = `<rect x="${p.x - 5}" y="${p.y - 5 - dec}" width="${p.w + 10}" height="${p.h + 10 + 2 * dec}" rx="9" fill="none" stroke="${c}" stroke-width="2.2"${st === "del" ? ' stroke-dasharray="5 3"' : ""}/>`;
+  const tags = [st, ...(moved && st !== "move" && st !== "add" ? ["move"] : [])];
+  let x = p.x + p.w + 5;
+  tags.reverse().forEach(k => {
+    const w = 28; x -= w;
+    g += `<rect x="${x}" y="${p.y - 25 - dec}" width="${w}" height="14" rx="4" fill="var(${DIFF_COLOR[k]})"/><text x="${x + w / 2}" y="${p.y - 18 - dec}" text-anchor="middle" dominant-baseline="middle" font-size="9.5" font-weight="600" fill="var(--surface)">${DIFF_BADGE[k]}</text>`;
+    x -= 3;
+  });
+  return g;
+}
 // 関連の線の見た目：点線と、塗らない矢じり（BPMN の関連にならう）
 const ASSOC_DASH = 'stroke-dasharray="2 3"';
 /* 図の本体（レーンの帯・矢印・ステップ・条件ラベル・課題の吹き出し）。座標は配置 L のまま（帯は x = 0〜W に描く）。
    o.ui = { selected, selEdge, issueBy } なら画面用：選択と強調・矢印の当たり判定・チェックの丸・補足と課題のしるし・
    全文の吹き出し・＋ハンドルを足す。o.ui がなければ画像用：操作のための部品は出さず、CSS のクラスで付けている色は属性で書く。
-   o.edgeFilter(E) が false の矢印は描かない */
+   o.edgeFilter(E) が false の矢印は描かない。
+   o.diff = { steps: ステップ ID -> 差分の状態（diffFlows の st）, moved: 担当が変わった ID の Set, edges: 矢印のキー -> 状態 } なら、
+   AsIs との差分を枠の色と札で示す。o.diff.dim なら変わらないステップを薄くする。o.ref なら比較元（AsIs）の図：操作の部品を出さず、ステップは data-ref で指す */
 function diagramBodySvg(f, L, W, H, o){
   const ui = o.ui, coBy = new Map(L.callouts.map(c => [c.id, c]));
   const marker = (id, c, o = 1) => `<marker id="${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 1 9 5 0 9z" fill="var(${c})" fill-opacity="${o}"/></marker>`;
   // 関連の線の矢じり（塗らない「く」の字）
   const open = (id, c, o = 1) => `<marker id="${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1.5 9 5 1 8.5" fill="none" stroke="var(${c})" stroke-opacity="${o}" stroke-width="1.5"/></marker>`;
-  let s = `<defs>${marker("arr", "--muted")}${open("oar", "--muted")}${ui ? marker("arrS", "--sel") + marker("arrH", "--sel", 0.6) + open("oarS", "--sel") + open("oarH", "--sel", 0.6) : ""}</defs>`;
+  let s = `<defs>${marker("arr", "--muted")}${open("oar", "--muted")}${ui ? marker("arrS", "--sel") + marker("arrH", "--sel", 0.6) + open("oarS", "--sel") + open("oarH", "--sel", 0.6) : ""}${o.diff ? ["add", "del"].map(k => marker("arr" + k, DIFF_COLOR[k]) + open("oar" + k, DIFF_COLOR[k])).join("") : ""}</defs>`;
   L.lanes.forEach((l, i) => {
     const y = L.laneY[i], lh = L.laneY[i + 1] - y;
     s += `<rect x="0" y="${y}" width="${W}" height="${lh}" fill="${i % 2 ? "var(--lane-b)" : "var(--lane-a)"}"/>`;
@@ -138,16 +156,18 @@ function diagramBodySvg(f, L, W, H, o){
   });
   // ドラッグ中に移動先のレーンを示す枠（ふだんは隠しておく）
   if (ui) s += `<rect class="lane-hi" x="${G.label}" y="0" width="${W - G.label}" height="${G.laneH}" visibility="hidden"/>`;
-  const selected = ui ? ui.selected : null, selEdge = ui ? ui.selEdge : null;
+  const selected = ui ? ui.selected : null, selEdge = ui ? ui.selEdge : null, df = o.diff;
+  const edgeDf = E => df ? df.edges.get(E.s.id + (E.assoc ? "~" : ">") + E.t.id) || "same" : "";
   // 選択中のステップに出入りする矢印（矢印を選んだときはその矢印）は強調して最前面に
   const isSelEdge = E => isRef(E, selEdge);
   const hot = E => selEdge ? isSelEdge(E) : !!selected && (E.s.id === selected || E.t.id === selected);
   const shown = o.edgeFilter ? L.edges.filter(o.edgeFilter) : L.edges;
   const edges = [...shown.filter(E => !hot(E)), ...shown.filter(hot)];
   edges.forEach(E => {
-    const h = hot(E), c = h ? "var(--sel)" : "var(--muted)";
-    const m = (E.assoc ? "oar" : "arr") + (h ? "S" : "");
-    s += `<path class="edge${E.assoc ? " assoc" : ""}${h ? " hot" : ""}${isSelEdge(E) ? " sel-edge" : ""}" data-s="${esc(E.s.id)}" data-t="${esc(E.t.id)}" data-k="${edgeKey(E)}" d="${pathD(E.pts)}" fill="none" stroke="${c}" stroke-width="${h ? 2.2 : 1.4}" ${E.assoc ? ASSOC_DASH : ""} marker-end="url(#${m})"/>`;
+    // 追加・削除した矢印は線の色を変える（条件だけ変わった矢印は、条件ラベルの枠の色で示す）
+    const h = hot(E), ed = edgeDf(E), dc = !h && (ed === "add" || ed === "del") && DIFF_COLOR[ed], c = h ? "var(--sel)" : dc ? `var(${dc})` : "var(--muted)";
+    const m = (E.assoc ? "oar" : "arr") + (h ? "S" : dc ? ed : "");
+    s += `<path class="edge${E.assoc ? " assoc" : ""}${h ? " hot" : ""}${isSelEdge(E) ? " sel-edge" : ""}" data-s="${esc(E.s.id)}" data-t="${esc(E.t.id)}" data-k="${edgeKey(E)}" d="${pathD(E.pts)}" fill="none" stroke="${c}" stroke-width="${h ? 2.2 : dc ? 2 : 1.4}" ${E.assoc || ed === "del" ? ASSOC_DASH.replace("2 3", ed === "del" ? "5 3" : "2 3") : ""} marker-end="url(#${m})"/>`;
   });
   // 細い矢印でもダブルクリックしやすいよう、透明の太い線を重ねる（data-k は edgeKey）
   if (ui) edges.forEach(E => {
@@ -157,7 +177,9 @@ function diagramBodySvg(f, L, W, H, o){
   L.steps.forEach(st => {
     const p = L.pos.get(st.id), sel = st.id === selected;
     const onDark = st.type === "start" || st.type === "end";
-    s += ui ? `<g class="node" data-step="${esc(st.id)}" tabindex="0" role="button" aria-label="${esc(TYPES[st.type] + "：" + (st.label || st.id) + (st.issue ? "（課題あり）" : ""))}">` : "<g>";
+    const dst = df ? df.steps.get(st.id) || "same" : "", dim = dst === "same" && df.dim ? ' opacity=".45"' : "";
+    s += o.ref ? `<g class="node ref" data-ref="${esc(st.id)}"${dim}>` : ui ? `<g class="node" data-step="${esc(st.id)}" tabindex="0" role="button" aria-label="${esc(TYPES[st.type] + "：" + (st.label || st.id) + (st.issue ? "（課題あり）" : ""))}"${dim}>` : `<g${dim}>`;
+    if (dst && dst !== "same") s += diffMarkSvg(dst, df.moved.has(st.id), p, st.type);
     if (sel) s += `<rect x="${p.x - 8}" y="${p.y - 12}" width="${p.w + 16}" height="${p.h + 24}" rx="10" fill="none" stroke="var(--sel)" stroke-width="2.5"/>`;
     s += shapeSvg(st.type, p.x, p.y, p.w, p.h, colorable(st) ? st.color : "");
     // 「ツール・手段を表示」中（o.info）は、使用システム・ツール・手段を内容の下に小さく 1 行出す（内容は 2 行まで）。判断・開始・終了は狭いので出さない
@@ -168,8 +190,8 @@ function diagramBodySvg(f, L, W, H, o){
     const ty = p.y + p.h / 2 - (lines.length - 1) * 8 - (st.type === "document" ? (sub ? 7 : 3) : 0) - (sp ? 6 : 0) + (st.type === "dataStore" ? 4 : 0) - (sub ? 7 : 0);
     if (sub) s += `<text class="sub" x="${p.x + p.w / 2}" y="${ty + (lines.length - 1) * 16 + 15}" text-anchor="middle" dominant-baseline="middle" font-size="10" fill="var(--muted)">${esc(wrapLabel(sub, 12, 1)[0])}</text>`;
     lines.forEach((t, k) => { s += `<text x="${p.x + p.w / 2}" y="${ty + k * 16}" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="500" fill="${onDark ? (st.type === "start" ? "var(--accent-ink)" : "var(--paper)") : (st.label ? "var(--ink)" : "var(--muted)")}">${esc(t)}</text>`; });
-    if (ui) s += `<text x="${p.x + 2}" y="${p.y - 4 - (st.type === "decision" ? 6 : 0)}" font-size="10" font-family="IBM Plex Mono, monospace" fill="var(--muted)">${esc(st.id)}</text>`;
-    if (ui){
+    if (ui || o.ref) s += `<text x="${p.x + 2}" y="${p.y - 4 - (st.type === "decision" ? 6 : 0)}" font-size="10" font-family="IBM Plex Mono, monospace" fill="var(--muted)">${esc(st.id)}</text>`;
+    if (ui || o.ref){
       // 右上のしるし：課題（赤い角丸の四角に「!」）を一番右に、補足（メモ）はその左に並べる。
       // 課題を吹き出しで出している間は、しるしが二重にならないよう課題のしるしは出さない（補足を右端へ詰める）
       const by = p.y + (onDark ? 8 : -3); // 上辺にまたがせ、3行の文言とも重ならない高さ
@@ -177,7 +199,7 @@ function diagramBodySvg(f, L, W, H, o){
       if (st.issue && !coBy.has(st.id)){ s += `<rect x="${bx - 8}" y="${by - 8}" width="16" height="16" rx="4" fill="var(--bad)" stroke="var(--surface)" stroke-width="1.5"/><path d="M${bx} ${by - 4.2}v5" stroke="var(--surface)" stroke-width="2" stroke-linecap="round"/><circle cx="${bx}" cy="${by + 4}" r="1.2" fill="var(--surface)"/>`; bx -= 20; }
       // 補足は課題と同じ大きさの角丸の四角。白地に灰色の枠とメモの線で、赤い課題より目立たないようにする
       if (st.note) s += `<rect x="${bx - 8}" y="${by - 8}" width="16" height="16" rx="4" fill="var(--surface)" stroke="var(--muted)" stroke-width="1.3"/><path d="M${bx - 4} ${by - 3.5}h8M${bx - 4} ${by}h8M${bx - 4} ${by + 3.5}h5" stroke="var(--muted)" stroke-width="1.4" stroke-linecap="round"/>`;
-      const lv = ui.issueBy.get(st.id);
+      const lv = ui?.issueBy.get(st.id);
       if (lv === "bad" || lv === "warn") s += `<circle cx="${p.x + 4}" cy="${p.y + (onDark ? 8 : 2)}" r="5" fill="var(--${lv})" stroke="var(--surface)" stroke-width="1.5"/>`;
     }
     s += `</g>`;
@@ -186,7 +208,8 @@ function diagramBodySvg(f, L, W, H, o){
   edges.forEach(E => {
     if (!E.label) return;
     s += ui ? `<g class="elabel" data-edge="${esc(E.s.id)}" data-k="${edgeKey(E)}"><title>${esc(E.label.t + "\nダブルクリックで条件を編集")}</title>` : "<g>";
-    s += labelSvg(E, hot(E) ? "var(--sel)" : "var(--line-strong)") + `</g>`;
+    const ed = edgeDf(E);
+    s += labelSvg(E, hot(E) ? "var(--sel)" : DIFF_COLOR[ed] ? `var(${DIFF_COLOR[ed]})` : "var(--line-strong)") + `</g>`;
   });
   // 課題の吹き出し。ステップとは短い線でつなぐ。文を省いたものは、マウスを乗せる・選ぶと全文の吹き出しを一番手前に重ねる（co-pop）
   const coBody = (c, y, h, lines) => {
@@ -199,7 +222,7 @@ function diagramBodySvg(f, L, W, H, o){
   L.callouts.forEach(c => {
     s += `<g class="callout" data-co="${esc(c.id)}" aria-hidden="true"><path class="co-stem" d="M${c.ax} ${c.ay}V${c.stemY}"${ui ? "" : ' fill="none" stroke="var(--bad)" stroke-width="1.6"'}/><circle cx="${c.ax}" cy="${c.ay}" r="2.6" fill="var(--bad)"/>${coBody(c, c.y, c.h, c.lines)}</g>`;
   });
-  if (!ui) return s;
+  if (!ui || o.ref) return s;
   let pops = "";
   L.callouts.filter(c => c.cut).forEach(c => {
     const y = c.side === "T" ? c.y + c.h - c.fullH : Math.min(c.y, H - 2 - c.fullH);
@@ -219,12 +242,12 @@ function diagramBodySvg(f, L, W, H, o){
       if (below) s += handle("B", p.x + p.w / 2, p.y + p.h + 22, `次のステップを「${below.name}」に追加（種類を選ぶ）・ドラッグで別のステップにつなぐ`);
     }
   }
-  // 選択中の矢印の両端に丸。ドラッグでつなぎ替え・出入りする辺の指定
+  // 選択中の矢印の両端に丸。ドラッグでつなぎ替え・出入りする辺と辺の中の位置の指定（箱の真ん中で離すと自動）
   const SE = L.edges.find(isSelEdge);
   if (SE){
     const end = (k, [x, y], tip) => `<circle class="ehandle" data-end="${k}" cx="${x}" cy="${y}" r="6"><title>${esc(tip)}</title></circle>`;
-    s += end("s", SE.pts[0], SE.assoc ? "ドラッグで関連元のステップを変える" : "ドラッグで出るステップ・出る辺を変える");
-    s += end("t", SE.pts[SE.pts.length - 1], SE.assoc ? "ドラッグで関連先のステップを変える" : "ドラッグでつなぎ先・入る辺を変える");
+    s += end("s", SE.pts[0], SE.assoc ? "ドラッグで関連元のステップを変える" : "ドラッグで出るステップ・出る辺と位置を変える（箱の真ん中で離すと自動）");
+    s += end("t", SE.pts[SE.pts.length - 1], SE.assoc ? "ドラッグで関連先のステップを変える" : "ドラッグでつなぎ先・入る辺と位置を変える（箱の真ん中で離すと自動）");
     // 流れの矢印の途中に＋。押すと、選んだ種類のステップを矢印の間に入れる（関連の線には出さない）
     if (!SE.assoc){
       const [x, y] = edgePlusAt(SE), tip = "この矢印の間にステップを入れる（種類を選ぶ）";
@@ -236,13 +259,15 @@ function diagramBodySvg(f, L, W, H, o){
 function renderSvg(f, issues, selected, selEdge){
   const L = diagramLayout(f);
   const issueBy = new Map(); issues.forEach(i => { if (i.step && (!issueBy.has(i.step) || i.level === "bad")) issueBy.set(i.step, i.level); });
-  const W = Math.max(L.width, 420), H = Math.max(L.height, G.laneH);
   setLastL(L);
-  // レーン名の列は別のSVGにして左端に固定（横スクロールしても見えるように）。図本体は label 以降だけを描く
-  const FONT = "IBM Plex Sans JP, Hiragino Sans, sans-serif";
-  const head = `<svg class="lanes" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${G.label} ${H}" width="${G.label * S.zoom}" height="${H * S.zoom}" role="img" aria-label="担当（レーン）" font-family="${FONT}">${laneHeadSvg(L, W, H, true)}</svg>`;
-  const body = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${G.label} 0 ${W - G.label} ${H}" width="${(W - G.label) * S.zoom}" height="${H * S.zoom}" role="img" aria-label="${esc(f.name)}のフロー図" font-family="${FONT}">${diagramBodySvg(f, L, W, H, { ui: { selected, selEdge, issueBy }, info: S.showInfo })}</svg>`;
-  return `<div class="diagram">${head}${body}</div>`;
+  return diagramHtml("diagram", f, L, true, { ui: { selected, selEdge, issueBy }, info: S.showInfo, diff: cmpOn() ? diffOpt(S.cmp.d, "tobe") : null });
+}
+// レーン名の列は別のSVGにして左端に固定（横スクロールしても見えるように）。図本体は label 以降だけを描く
+function diagramHtml(cls, f, L, ui, o){
+  const W = Math.max(L.width, 420), H = Math.max(L.height, G.laneH), FONT = "IBM Plex Sans JP, Hiragino Sans, sans-serif";
+  const head = `<svg class="lanes" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${G.label} ${H}" width="${G.label * S.zoom}" height="${H * S.zoom}" role="img" aria-label="担当（レーン）" font-family="${FONT}">${laneHeadSvg(L, W, H, ui)}</svg>`;
+  const body = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${G.label} 0 ${W - G.label} ${H}" width="${(W - G.label) * S.zoom}" height="${H * S.zoom}" role="img" aria-label="${esc(f.name)}のフロー図" font-family="${FONT}">${diagramBodySvg(f, L, W, H, o)}</svg>`;
+  return `<div class="${cls}">${head}${body}</div>`;
 }
 
 /* ---------- state ---------- */
@@ -264,6 +289,50 @@ function toast(msg){ const t = $("#toast"), host = document.querySelector("dialo
 
 function fmtTime(ms){ if (!ms) return ""; const d = new Date(ms); const p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; }
 function newDocId(){ return "f" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+const nowIso = () => new Date().toISOString();
+
+/* ---------- AsIs／ToBe の比較 ---------- */
+// 差分の計算・更新の取り込みは js/core/diff.js。ここでは一覧のフローから比較元を探し、結果を S.cmp に置く
+const flowCache = new Map(); // YAML -> 読み取ったフロー（読めなければ null）
+function flowOfRec(r){
+  if (!r) return null;
+  if (!flowCache.has(r.yaml)){
+    let f = null; try { f = parseYaml(r.yaml); } catch {}
+    flowCache.set(r.yaml, f);
+    if (flowCache.size > 300) flowCache.delete(flowCache.keys().next().value);
+  }
+  return flowCache.get(r.yaml);
+}
+// 一覧のすべてのフロー（開いているものは今の中身）：[{ rid: 一覧の ID, f }]
+const allFlows = () => [...S.records.entries()].map(([rid, r]) => ({ rid, f: rid === S.currentId && S.flow ? S.flow : flowOfRec(r) })).filter(x => x.f);
+const flowById = fid => fid ? allFlows().find(x => x.f.id === fid) || null : null;
+function compareOf(f){
+  if (!f?.compare) return null;
+  const hit = flowById(f.compare.base), base = hit && hit.f !== f ? hit.f : null;
+  return { base, d: diffFlows(f.compare.snapshot, f), ups: base ? updatesSince(f, base) : [] };
+}
+const cmpOn = () => !!S.cmp && S.cmpView !== "off";
+const splitOn = () => !!S.cmp && S.cmpView === "split";
+// 図に重ねる差分（diagramBodySvg の o.diff）。side：tobe＝差分の後の側 / ref＝前の側（写し）
+function diffOpt(d, side){
+  const dim = S.cmpDim;
+  if (side === "tobe") return { steps: new Map([...d.steps].map(([id, x]) => [id, x.st])), moved: new Set([...d.steps].filter(([, x]) => x.moved).map(([id]) => id)), edges: d.edges.target, dim };
+  return { steps: d.base, moved: new Set([...d.steps.values()].filter(x => x.moved && !x.src).map(x => x.base.id)), edges: d.edges.base, dim };
+}
+// 比較元のステップ rid にあたる ToBe のステップ
+const tobeOf = rid => S.cmp ? [...S.cmp.d.steps].filter(([, x]) => x.src ? x.src.some(b => b.id === rid) : x.base?.id === rid).map(([id]) => id) : [];
+const refOfStep = id => { const x = S.cmp?.d.steps.get(id); return x ? (x.src || (x.base ? [x.base] : [])).map(b => b.id) : []; };
+// フローの ID（id）がなければ足して保存する。YAML のコメントを残すよう、先頭に 1 行足す
+function withFlowId(text, id){ return /^id:.*$/m.test(text) ? text.replace(/^id:.*$/m, `id: ${id}`) : `id: ${id}\n` + text; }
+async function ensureFlowId(rid){
+  const r = S.records.get(rid), f = rid === S.currentId ? S.flow : flowOfRec(r);
+  if (!f || f.id) return f;
+  if (rid === S.currentId){ S.flow.id = newFlowId(); commit(); return S.flow; }
+  const rec = { ...r, yaml: withFlowId(r.yaml, newFlowId()), updatedAt: Date.now() };
+  setRecord(rid, rec);
+  try { if (S.store === "folder") await persistFile(rid, rec); else markUnexported(rid); } catch { toast("比較元のファイルを保存できませんでした"); }
+  return flowOfRec(rec);
+}
 
 /* ---------- persistence ---------- */
 // 保存先（store）：folder＝作業フォルダの .yaml ファイル / memory＝このタブのメモリだけ
@@ -357,6 +426,19 @@ async function renameFile(){
   renderList(); toast(`ファイル名を「${want}」に変えました`);
 }
 
+// 開いていないフローの名前を変える。YAML の name の行だけを書き換え（コメントは残す）、作業フォルダではファイル名も合わせる
+async function renameRecord(rid, name){
+  const r = S.records.get(rid); if (!r) return;
+  const line = jsyaml.dump({ name }, { lineWidth: -1 }).trim();
+  const rec = { ...r, name, yaml: /^name:.*$/m.test(r.yaml) ? r.yaml.replace(/^name:.*$/m, line) : line + "\n" + r.yaml, updatedAt: Date.now() };
+  if (S.store !== "folder"){ setRecord(rid, rec); markUnexported(rid); return; }
+  try {
+    const to = await freeName(name, rid);
+    await persistFile(to, rec);
+    if (to !== rid){ if (S.histDir) await S.histDir.removeEntry(rid).catch(() => {}); await S.dir.removeEntry(rid).catch(() => {}); forgetRecord(rid); forgetFileMeta(rid); }
+    setRecord(to, rec);
+  } catch { toast(`「${r.name}」の名前を変えられませんでした`); }
+}
 async function chooseFolder(){
   let h;
   try { h = await window.showDirectoryPicker({ id: "gyomu-flow-folder", mode: "readwrite" }); }
@@ -522,6 +604,8 @@ async function create(yamlText, opts = {}){
   let f; try { f = parseYaml(yamlText); } catch (e){ toast("読み込めませんでした：" + e.message); return false; }
   let text = yamlText;
   if ([...S.records.values()].some(r => r.name === f.name)){ f.name += "（コピー）"; text = toYaml(f); }
+  // フローの ID：新しく作るフローには付ける。ほかのフローと同じ ID（複製・同じファイルの読み込み）なら振り直す
+  if (!f.id || allFlows().some(x => x.f.id === f.id)) text = withFlowId(text, newFlowId());
   const id = S.store === "folder" ? await freeName(f.name) : newDocId();
   setPendingCreate(id);
   setRecord(id, { name: f.name, yaml: text, updatedAt: Date.now(), history: [] });
@@ -532,7 +616,7 @@ async function create(yamlText, opts = {}){
   return true;
 }
 function showEmpty(){
-  setCurrentId(null); setFlow(null); setBroken(false);
+  setCurrentId(null); setFlow(null); setBroken(false); setCmp(null); updateCmpUi(); $("#tab-cmp").innerHTML = "";
   $("#flowName").value = ""; $("#flowName").disabled = true; $("#exportBtn").disabled = true;
   setStatus("saved", "フローなし");
   renderNotice(); syncMemo();
@@ -585,7 +669,8 @@ function keepUnlinked(){
   lost.forEach(s => { const t = S.lastL.pos.get(s.id).t; if (pos2.get(s.id) && pos2.get(s.id).t !== t) s.row = t + 1; });
 }
 function refresh(withForm){
-  setIssues(validate(S.flow));
+  setCmp(compareOf(S.flow));
+  setIssues(validate(S.flow, { base: S.cmp?.base }));
   drawCanvas();
   updateIssueBtn(); updateInfoBtn();
   const bad = S.issues.filter(i => i.level === "bad").length, warn = S.issues.filter(i => i.level === "warn").length;
@@ -593,12 +678,15 @@ function refresh(withForm){
   if (withForm) renderForm(); else updateFlags();
   syncMemo();
   renderChecks();
+  updateCmpUi();
+  // 比較タブの入力欄で書いている間は描き直さない（カーソルが外れないように）
+  if (withForm || !$("#tab-cmp").contains(document.activeElement)) renderCmp();
   if (S.tab === "hist") renderHist();
 }
 function drawCanvas(){
   const c = $("#canvas"), sl = c.scrollLeft, st = c.scrollTop;
   const fid = document.activeElement?.closest?.("#canvas [data-step]")?.dataset.step;
-  c.innerHTML = renderSvg(S.flow, S.issues, S.selected, S.selEdge);
+  c.innerHTML = splitOn() ? splitHtml() : renderSvg(S.flow, S.issues, S.selected, S.selEdge);
   c.scrollLeft = sl; c.scrollTop = st;
   c.style.scrollPaddingLeft = G.label * S.zoom + 16 + "px";
   $("#zoomVal").textContent = Math.round(S.zoom * 100) + "%";
@@ -607,6 +695,16 @@ function drawCanvas(){
   if (inlineEd && !inlineEd.place()) inlineEd.finish(true);
   applyHover();
   updateHint();
+}
+/* AsIs と並べる。AsIs（比較元の写し。「今の版」では今の比較元）は操作できない図（ref-diagram）にし、ToBe はふだんどおり編集できる */
+function splitHtml(){
+  const cp = S.flow.compare, now = S.refNow && S.cmp.base && S.cmp.ups.length;
+  const F = now ? S.cmp.base : { name: S.cmp.base?.name || "比較元", lanes: cp.snapshot.lanes, steps: cp.snapshot.steps };
+  const diff = now ? diffOpt(diffFlows(cp.snapshot, S.cmp.base), "tobe") : diffOpt(S.cmp.d, "ref");
+  const sw = S.cmp.base && S.cmp.ups.length ? `<span class="mini-seg" role="group" aria-label="AsIs の版"><button data-refnow="0" aria-pressed="${!now}">写し</button><button data-refnow="1" aria-pressed="${!!now}">今の版</button></span>` : "";
+  const ref = diagramHtml("ref-diagram", F, diagramLayout(F), false, { ref: true, info: S.showInfo, diff });
+  return `<div class="cmp-split ${S.cmpOrient}"><section class="cmp-pane"><div class="cmp-h"><span class="ftag asis">AsIs</span><span class="nm">${esc(F.name)}</span>${sw}</div>${ref}</section>`
+    + `<section class="cmp-pane"><div class="cmp-h"><span class="ftag tobe">ToBe</span><span class="nm">${esc(S.flow.name)}</span></div>${renderSvg(S.flow, S.issues, S.selected, S.selEdge)}</section></div>`;
 }
 function updateHint(){
   const h = $("#canvasHint"); h.hidden = !S.flow;
@@ -633,7 +731,28 @@ function renderList(){
   const ul = $("#flowList");
   const ids = sortedIds();
   if (!ids.length){ ul.innerHTML = `<li class="help" style="padding:8px 10px">${S.store === "pending" ? "読み込み中…" : S.store === "folder" && !S.dir ? "作業フォルダを開いていません。" : "まだフローがありません。"}</li>`; return; }
-  ul.innerHTML = ids.map(id => { const r = S.records.get(id); return `<li><button data-open="${esc(id)}" aria-current="${id === S.currentId}"${S.store === "folder" ? ` title="${esc(id)}"` : ""}><span class="fn">${esc(r.name || "無題")}</span></button></li>`; }).join("");
+  /* ToBe は比較元（AsIs）の下にぶら下げる（ToBe からさらに作った ToBe はその下）。比較元が一覧にない ToBe は一番上の段に置く。
+     並びは、ぶら下がっているフローも含めて最後に変えた順 */
+  const fl = new Map(ids.map(id => [id, flowOfRec(S.records.get(id))])), byFid = new Map();
+  ids.forEach(id => { const f = fl.get(id); if (f?.id && !byFid.has(f.id)) byFid.set(f.id, id); });
+  const parentOf = id => { const p = byFid.get(fl.get(id)?.compare?.base); return p && p !== id ? p : null; };
+  // 比較元をたどって自分に戻る（互いを比較元にしている）ときは、ぶら下げない
+  const loops = id => { const seen = new Set(); for (let q = parentOf(id); q && !seen.has(q); q = parentOf(q)){ if (q === id) return true; seen.add(q); } return false; };
+  const kids = new Map(), roots = [];
+  ids.forEach(id => { const p = parentOf(id); if (p && !loops(id)) (kids.get(p) || kids.set(p, []).get(p)).push(id); else roots.push(id); });
+  const latest = id => Math.max(S.records.get(id).updatedAt || 0, ...(kids.get(id) || []).map(latest));
+  const order = list => list.slice().sort((x, y) => latest(y) - latest(x));
+  // ぶら下がるフローは入れ子のリストにする（左の縦線で段を示す）。札は右のステップ一覧の担当と同じく、名前の右に置く
+  // 名前が親と同じ言葉で始まるとき（「〇〇（ToBe 案A）」など）は、幅が足りなければ前半だけを「…」にして、違いの出る後半を残す
+  const item = (id, parent) => {
+    const r = S.records.get(id), f = fl.get(id), ch = kids.get(id) || [], name = r.name || "無題";
+    const tag = f?.compare ? `<span class="ftag tobe">ToBe</span>` : ch.length ? `<span class="ftag asis">AsIs</span>` : "";
+    const k = parent && name.length > parent.length && name.startsWith(parent) ? parent.length : 0;
+    const fn = k ? `<span class="fn split"><span class="pre">${esc(name.slice(0, k))}</span><span class="suf">${esc(name.slice(k))}</span></span>` : `<span class="fn">${esc(name)}</span>`;
+    return `<li><button data-open="${esc(id)}" aria-current="${id === S.currentId}" title="${esc(name + (S.store === "folder" ? "\n" + id : ""))}">${fn}${tag}</button>`
+      + (ch.length ? `<ul class="sub">${order(ch).map(c => item(c, name)).join("")}</ul>` : "") + `</li>`;
+  };
+  ul.innerHTML = order(roots).map(id => item(id, null)).join("");
 }
 
 /* ---------- form editor ---------- */
@@ -679,10 +798,10 @@ function renderForm(){
   if (!S.flow.lanes.length) g += `<p class="help">担当がありません。「＋ 担当を追加」で部署や役割を追加してください。</p>`;
   g += `</div>`;
   g += `<div class="sec"><div class="sec-head"><h3>このフローの管理</h3></div><div class="row" style="flex-wrap:wrap">
-    <button class="btn sm" data-act="dup">複製</button><button class="btn sm danger" data-act="flow-del">このフローを削除</button></div></div>`;
+    <button class="btn sm" data-act="tobe">ToBe を作る</button><button class="btn sm" data-act="dup">複製</button><button class="btn sm danger" data-act="flow-del">このフローを削除</button></div></div>`;
   $("#tab-setup").innerHTML = g;
   let h = `<div class="sec"><div class="sec-head"><h3>ステップ</h3><button class="btn sm" data-act="step-add">＋ ステップを追加</button></div>
-    <div class="step-tools"><button class="btn sm ghost" data-act="sort-flow" title="図の左から右、上から下の順に並べ替えます">図の順に並べる</button><button class="btn sm ghost" data-act="renumber" title="今の並び順でIDを 1 から振り直します。つながりも自動で書き換えます">IDを振り直す</button></div>`;
+    <div class="step-tools"><button class="btn sm ghost" data-act="sort-flow" title="図の左から右、上から下の順に並べ替えます">図の順に並べる</button>${linkedFlow() ? "" : `<button class="btn sm ghost" data-act="renumber" title="今の並び順でIDを 1 から振り直します。つながりも自動で書き換えます">IDを振り直す</button>`}</div>`;
   S.flow.steps.forEach(s => {
     const laneName = S.flow.lanes.find(l => l.id === s.lane)?.name || "担当未設定";
     const isOpen = s.id === S.selected;
@@ -726,6 +845,8 @@ function renderForm(){
   h += `</div>`;
   $("#tab-edit").innerHTML = h;
 }
+// AsIs／ToBe の比較でほかのフローとつながっている（ID を振り直すと、ステップの対応が崩れる）
+const linkedFlow = () => !!S.flow.compare || (!!S.flow.id && allFlows().some(x => x.f.compare?.base === S.flow.id));
 function updateFlags(){
   document.querySelectorAll("[data-flag]").forEach(el => {
     const id = el.dataset.flag;
@@ -738,6 +859,7 @@ const curStep = () => S.flow.steps.find(s => s.id === S.selected);
 
 function select(id, scroll){
   setSelected(id); setSelEdge(null); renderForm(); drawCanvas(); revealStep(id);
+  if (S.tab === "cmp"){ cmpOpen = id ? "t:" + id : null; renderCmp(); const el = $("#tab-cmp .ci.open"); el && el.scrollIntoView({ block: "nearest" }); return; }
   if (S.tab !== "edit") showTab("edit");
   if (scroll !== false){ const el = document.querySelector(`[data-stepcard="${CSS.escape(id)}"]`); el && el.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
 }
@@ -763,7 +885,8 @@ function deleteStep(id){
   S.flow.steps.forEach(p => { if (p.related?.includes(s.id)) p.related = p.related.filter(x => x !== s.id); });
   S.flow.steps.splice(S.flow.steps.indexOf(s), 1);
 }
-function newStepId(){ const taken = new Set(S.flow.steps.map(s => s.id)); const pre = (S.flow.steps.find(s => /^[a-z]+\d+$/i.test(s.id))?.id.match(/^[a-z]+/i) || ["s"])[0]; return uid(pre, taken); }
+// AsIs と ToBe で別々に同じ ID を振らないよう、比較でつながるフローのステップ ID も避ける（familyIds）
+function newStepId(){ const taken = familyIds(S.flow, allFlows().map(x => x.f)); const pre = (S.flow.steps.find(s => /^[a-z]+\d+$/i.test(s.id))?.id.match(/^[a-z]+/i) || ["s"])[0]; return uid(pre, taken); }
 
 const onPanels = (type, fn) => ["#tab-edit", "#tab-setup"].forEach(sel => $(sel).addEventListener(type, fn));
 onPanels("input", ev => {
@@ -781,7 +904,7 @@ onPanels("change", ev => {
   // 流れの途中のステップを帳票・データに変えたら、前後の流れをつなぎ直す（toArtifact）
   if (t.dataset.sf === "type"){ if (toArtifact(S.flow, s.id, t.value)) toast("前後のステップを矢印でつなぎ直し、この" + TYPES[t.value] + "は前のステップと関連（点線）で結びました"); if (!colorable(s)) delete s.color; commit({ form: true }); }
   else if (t.dataset.sf === "lane"){ s.lane = t.value; commit({ form: true }); }
-  else if (t.dataset.nf === "to"){ const e = s.next[+t.dataset.nx]; e.to = t.value; delete e.entry; if (!t.value) s.next.splice(+t.dataset.nx, 1); commit({ form: true }); }
+  else if (t.dataset.nf === "to"){ const e = s.next[+t.dataset.nx]; e.to = t.value; delete e.entry; delete e.entryAt; if (!t.value) s.next.splice(+t.dataset.nx, 1); commit({ form: true }); }
   else if (t.dataset.rx != null){
     const rel = s.related ||= [], v = t.value;
     if (t.dataset.rx === "new"){ if (v && !rel.includes(v)) rel.push(v); }
@@ -857,7 +980,21 @@ onPanels("click", ev => {
     case "rel-del": s.related?.splice(+b.dataset.k, 1); break;
     case "color": if (b.dataset.color) s.color = b.dataset.color; else delete s.color; break;
     case "col-auto": delete s.col; delete s.row; break;
-    case "dup": { const f = JSON.parse(JSON.stringify(S.flow)); f.name += "（コピー）"; create(toYaml(f)); return; }
+    case "dup": { const f = JSON.parse(JSON.stringify(S.flow)); f.name += "（コピー）"; delete f.id; create(toYaml(f)); return; }
+    case "tobe": {
+      // 2 つ目からの ToBe は「案B」「案C」…。名前を変えていない 1 つ目は「案A」に変える
+      if (!S.flow.id){ S.flow.id = newFlowId(); commit(); }
+      const asis = S.flow, sib = allFlows().filter(x => x.f.compare?.base === asis.id), nm = toBeName(asis.name, sib.map(x => x.f.name));
+      const one = nm.first && sib.find(x => x.f.name === nm.first.from), f = makeToBe(asis, nowIso(), nm.name);
+      (async () => {
+        if (one) await renameRecord(one.rid, nm.first.to);
+        if (!(await create(toYaml(f)))) return;
+        if (S.cmpView === "off") setView("overlay");
+        showTab("cmp");
+        if (one) toast(`1 つ目の ToBe を「${nm.first.to}」にしました`);
+      })();
+      return;
+    }
     case "flow-del": {
       b.dataset.orig = "このフローを削除"; if (!arm(b, "flow" + S.currentId, "もう一度押すと完全に削除")) return;
       const id = S.currentId; forgetRecord(id); clearTimeout(S.saveTimer); setDirty(false);
@@ -892,7 +1029,11 @@ function focusLabel(){ const el = document.querySelector(`#sl-${CSS.escape(S.sel
 $("#canvas").addEventListener("click", ev => {
   const g = ev.target.closest("[data-step]");
   // 選択中のステップをもう一度クリックしても描き直さない（ダブルクリックで編集できるように）
-  if (g){ if (g.dataset.step !== S.selected) select(g.dataset.step); else if (S.tab !== "edit") showTab("edit"); return; }
+  if (g){ if (g.dataset.step !== S.selected) select(g.dataset.step); else if (S.tab !== "edit" && S.tab !== "cmp") showTab("edit"); return; }
+  // 並べた AsIs のステップ：対応する ToBe のステップを選ぶ（なければ比較タブで削除の項目を開く）
+  const rf = ev.target.closest("[data-ref]");
+  if (rf){ const t = tobeOf(rf.dataset.ref); if (t.length) select(t[0]); else { cmpOpen = "r:" + rf.dataset.ref; showTab("cmp"); } return; }
+  const rn = ev.target.closest("[data-refnow]"); if (rn){ setRefNow(rn.dataset.refnow === "1"); drawCanvas(); return; }
   // 課題の吹き出し：そのステップを選ぶ
   const co = ev.target.closest("[data-co]"); if (co){ if (co.dataset.co !== S.selected) select(co.dataset.co); else if (S.tab !== "edit") showTab("edit"); return; }
   const n = ev.target.closest("[data-new]"); if (n){ startNew(n.dataset.new); return; }
@@ -924,6 +1065,7 @@ $("#canvas").addEventListener("dblclick", ev => {
 // 描き直さずにクラスだけ付け替える（描き直すとダブルクリックやフォーカスが途切れるため）
 const hovKey = el => {
   const g = el?.closest?.("#canvas [data-step]"); if (g) return "step\n" + g.dataset.step;
+  const rf = el?.closest?.("#canvas [data-ref]"); if (rf) return "ref\n" + rf.dataset.ref;
   const co = el?.closest?.("#canvas [data-co]"); if (co) return "step\n" + co.dataset.co;
   const e = el?.closest?.("#canvas .ehit, #canvas .elabel"); return e ? "edge\n" + e.dataset.edge + "\n" + e.dataset.k : null;
 };
@@ -932,8 +1074,15 @@ function applyHover(){
   c.querySelectorAll(".hv").forEach(el => el.classList.remove("hv"));
   const busy = ["dragging", "linking", "reattaching", "panning"].some(k => c.classList.contains(k));
   const [kind, id, k] = key && !busy ? key.split("\n") : [];
-  showTip(kind === "step" ? id : null);
+  showTip(kind === "step" || kind === "ref" ? id : null, kind === "ref");
   if (!kind) return;
+  // 並べているときは、AsIs と ToBe の対応するステップを一緒に強調する
+  if (splitOn() && (kind === "step" || kind === "ref")){
+    const [refs, steps] = kind === "step" ? [refOfStep(id), []] : [[id], tobeOf(id)];
+    refs.forEach(r => c.querySelectorAll(`[data-ref="${CSS.escape(r)}"]`).forEach(el => el.classList.add("hv")));
+    steps.forEach(t => c.querySelectorAll(`[data-step="${CSS.escape(t)}"]`).forEach(el => el.classList.add("hv")));
+    if (kind === "ref") return;
+  }
   // ステップと、その課題の吹き出しを一緒に強調する（どちらに乗せても、どれとどれが対応しているかわかるように）
   if (kind === "step") c.querySelectorAll(`[data-step="${CSS.escape(id)}"], [data-co="${CSS.escape(id)}"]`).forEach(el => el.classList.add("hv"));
   const paths = [...c.querySelectorAll("path.edge")].filter(p => kind === "step" ? p.dataset.s === id || p.dataset.t === id : p.dataset.s === id && p.dataset.k === k);
@@ -951,16 +1100,22 @@ const TIP_ICON = {
   info: `<svg viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="1" width="12" height="12" rx="3" fill="var(--surface)" stroke="var(--muted)" stroke-width="1.2"/><path d="M4 5h3.5M4 9h3.5M9 3.5 11 5 9 6.5M9 7.5 11 9 9 10.5" fill="none" stroke="var(--muted)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`
 };
 let tipId = null;
-function showTip(id){
-  const tip = $("#stepTip"), st = id && S.flow ? S.flow.steps.find(s => s.id === id) : null;
+// ref：並べた AsIs のステップ（data-ref）
+function showTip(id, ref){
+  const tip = $("#stepTip");
+  const F = ref ? (S.refNow && S.cmp?.base && S.cmp.ups.length ? S.cmp.base : S.flow?.compare?.snapshot) : S.flow;
+  const st = id && F ? F.steps.find(s => s.id === id) : null;
   // 課題を吹き出しで出しているときは、ツールチップには補足だけを出す
-  const issue = st && !(S.lastL?.callouts.some(c => c.id === id)) ? st.issue : "";
-  const g = st && (st.note || issue || hasTool(st)) && !inlineEd ? $("#canvas").querySelector(`[data-step="${CSS.escape(id)}"] .shape`) : null;
+  const issue = st && (ref || !(S.lastL?.callouts.some(c => c.id === id))) ? st.issue : "";
+  const dl = st && cmpOn() ? (ref ? refDiffLines(id) : diffLines(S.cmp.d.steps.get(id))) : [];
+  const g = st && (st.note || issue || hasTool(st) || dl.length) && !inlineEd ? $("#canvas").querySelector(`[data-${ref ? "ref" : "step"}="${CSS.escape(id)}"] .shape`) : null;
   if (!g){ tip.hidden = true; tipId = null; return; }
-  if (tipId !== id + "\n" + !!issue){
-    tipId = id + "\n" + !!issue;
-    const sec = (cls, label, body) => `<div class="tt-sec ${cls}"><div class="tt-h">${TIP_ICON[cls.slice(3)]}${label}</div>${body}</div>`, txt = t => `<div class="tt-b">${esc(t)}</div>`;
-    tip.innerHTML = (st.note ? sec("tt-note", "補足", txt(st.note)) : "") + (issue ? sec("tt-issue", "課題", txt(issue)) : "") + (hasTool(st) ? sec("tt-info", TOOL_NAME, txt(st.tool.trim())) : "");
+  if (tipId !== id + "\n" + !!issue + "\n" + !!ref){
+    tipId = id + "\n" + !!issue + "\n" + !!ref;
+    const sec = (cls, label, body) => `<div class="tt-sec ${cls}"><div class="tt-h">${TIP_ICON[cls.slice(3)] || ""}${label}</div>${body}</div>`, txt = t => `<div class="tt-b">${esc(t)}</div>`;
+    const ch = ref ? S.flow.removed?.find(r => r.id === id) : st.change;
+    tip.innerHTML = (dl.length ? sec("tt-diff", ref ? "ToBe では" : "AsIs から", dl.map(l => txt(l)).join("") + (ch?.kind || ch?.reason ? txt([KINDS[ch.kind], ch.reason].filter(Boolean).join("：")) : "")) : "")
+      + (st.note ? sec("tt-note", "補足", txt(st.note)) : "") + (issue ? sec("tt-issue", "課題", txt(issue)) : "") + (hasTool(st) ? sec("tt-info", TOOL_NAME, txt(st.tool.trim())) : "");
   }
   // 図の見えている範囲から外れたステップには出さない
   const r = g.getBoundingClientRect(), cr = $("#canvas").getBoundingClientRect();
@@ -975,7 +1130,7 @@ const hideTip = () => { $("#stepTip").hidden = true; tipId = null; };
 // ドラッグやダブルクリックでの編集を始めたら隠す（描き直したあとに、乗せたままなら出し直す）
 $("#canvas").addEventListener("pointerdown", hideTip, true);
 $("#canvas").addEventListener("dblclick", hideTip, true);
-$("#canvas").addEventListener("scroll", () => { if (tipId) showTip(tipId.split("\n")[0]); });
+$("#canvas").addEventListener("scroll", () => { if (tipId){ const [id, , r] = tipId.split("\n"); showTip(id, r === "true"); } });
 $("#canvas").addEventListener("mouseover", ev => { const key = hovKey(ev.target); if (key !== hovMouse){ hovMouse = key; applyHover(); } });
 $("#canvas").addEventListener("mouseleave", () => { if (hovMouse){ hovMouse = null; applyHover(); } });
 $("#canvas").addEventListener("focusin", ev => { hovFocus = ev.target.matches(":focus-visible") ? hovKey(ev.target) : null; applyHover(); });
@@ -993,7 +1148,13 @@ function zoomTo(z, px, py){
 }
 function fitZoom(){
   if (!S.flow) return; const L = diagramLayout(S.flow), c = $("#canvas"); if (!c.clientWidth) return;
-  const z = Math.min((c.clientWidth - 34) / Math.max(L.width, 420), (c.clientHeight - 42) / L.height, 1.4);
+  let w = Math.max(L.width, 420), h = L.height, cw = c.clientWidth - 34, ch = c.clientHeight - 42;
+  // 並べているときは 2 つの図が入るように（見出しと間のすき間の分は、拡大率によらず引く）
+  if (splitOn()){
+    const R = diagramLayout(S.flow.compare.snapshot), rw = Math.max(R.width, 420);
+    if (S.cmpOrient === "lr"){ w += rw; cw -= 16; ch -= 30; h = Math.max(h, R.height); } else { w = Math.max(w, rw); h += R.height; ch -= 76; }
+  }
+  const z = Math.min(cw / w, ch / h, 1.4);
   setZoom(Math.min(2, Math.max(0.2, Math.round(z * 100) / 100))); drawCanvas(); c.scrollLeft = 0; c.scrollTop = 0;
 }
 // ドラッグ操作のあとのクリックは「選択解除」として扱わない
@@ -1207,6 +1368,7 @@ function insertOnEdge(ref, type){
   const s = S.flow.steps.find(x => x.id === ref.sid), e = s?.next[ref.k]; if (!e) return;
   const id = newStepId(), ns = blankStep(id, type, s.lane), ne = { to: e.to, when: "" };
   if (e.entry){ ne.entry = e.entry; delete e.entry; }
+  if (e.entryAt != null){ ne.entryAt = e.entryAt; delete e.entryAt; }
   ns.next.push(ne); e.to = id;
   S.flow.steps.splice(S.flow.steps.indexOf(s) + 1, 0, ns);
   commit({ form: true, select: id }); scrollCard(id); editStepInline(id);
@@ -1305,37 +1467,40 @@ function connect(a, b, fix, rel){
   if (s.type === "decision") editEdgeInline(a, s.next.length - 1);
 }
 
-/* 選んだ矢印の端を離した先。ステップの上なら { id, side, pt }。
-   side は箱の外寄り（中心から縦横それぞれ半分より外）にいるときの一番近い辺で、真ん中なら null（自動） */
+/* 選んだ矢印の端を離した先。ステップの上なら { id, side, at, pt }。
+   side は箱の外寄り（中心から縦横それぞれ半分より外）にいるときの一番近い辺で、真ん中なら null（自動）。
+   at はその辺のどこか（exitAt・entryAt の 0〜100。5 刻み）で、pt はその点 */
 function reattachAt(ev, p, d){
   const g = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.("#canvas [data-step]"); if (!g) return null;
   const id = g.dataset.step, to = refTo(d.edge); if (to == null) return null;
   // 矢印の両端を同じステップにはしない
   if (d.reattach === "t" ? id === d.edge.sid : id === to) return null;
   // 関連（点線）は辺を指定しない
-  if (d.edge.rel) return { id, side: null, pt: null };
+  if (d.edge.rel) return { id, side: null, at: null, pt: null };
   const st = S.lastL.steps.find(x => x.id === id), pos = S.lastL.pos.get(id);
   const dx = (p[0] - (pos.x + pos.w / 2)) / (pos.w / 2), dy = (p[1] - (pos.y + pos.h / 2)) / (pos.h / 2);
-  if (Math.max(Math.abs(dx), Math.abs(dy)) < 0.5) return { id, side: null, pt: null };
+  if (Math.max(Math.abs(dx), Math.abs(dy)) < 0.5) return { id, side: null, at: null, pt: null };
   // 一番近い辺（左右の辺までと上下の辺までの距離を比べる）
   const side = (1 - Math.abs(dx)) * pos.w < (1 - Math.abs(dy)) * pos.h ? (dx > 0 ? "R" : "L") : (dy > 0 ? "B" : "T");
-  return { id, side, pt: portAt(st, pos, side) };
+  const lr = side === "L" || side === "R", at = Math.round(offAt(st, side, lr ? p[1] - (pos.y + pos.h / 2) : p[0] - (pos.x + pos.w / 2)) / 5) * 5;
+  return { id, side, at, pt: portAt(st, pos, side, atOff(st, side, at)) };
 }
-/* 矢印のつなぎ替え。end は動かした端（s = 出るステップ、t = つなぎ先）、side は出入りする辺（null で自動） */
-function reattach(ref, end, id, side){
+/* 矢印のつなぎ替え。end は動かした端（s = 出るステップ、t = つなぎ先）、side は出入りする辺（null で自動）、at は辺のどこか（null で自動） */
+function reattach(ref, end, id, side, at){
   if (ref.rel) return reattachRel(ref, end, id);
   const s = S.flow.steps.find(x => x.id === ref.sid), e = s?.next[ref.k]; if (!e){ drawCanvas(); return; }
-  const pin = (k, v) => { if (v) e[k] = v; else delete e[k]; };
+  const pin = k => { if (side) e[k] = side; else delete e[k]; if (side && at != null) e[k + "At"] = at; else delete e[k + "At"]; };
+  const same = k => (e[k] || null) === side && (e[k + "At"] ?? null) === (side ? at : null);
   if (end === "t"){
-    if (id === e.to){ if ((e.entry || null) === side){ drawCanvas(); return; } pin("entry", side); commit({ form: true, select: null, edge: ref }); return; }
+    if (id === e.to){ if (same("entry")){ drawCanvas(); return; } pin("entry"); commit({ form: true, select: null, edge: ref }); return; }
     if (s.next.some(x => x !== e && x.to === id)){ toast("すでにつながっています"); drawCanvas(); return; }
-    e.to = id; pin("entry", side); commit({ form: true, select: null, edge: ref });
+    e.to = id; pin("entry"); commit({ form: true, select: null, edge: ref });
     return;
   }
-  if (id === s.id){ if ((e.exit || null) === side){ drawCanvas(); return; } pin("exit", side); commit({ form: true, select: null, edge: ref }); return; }
+  if (id === s.id){ if (same("exit")){ drawCanvas(); return; } pin("exit"); commit({ form: true, select: null, edge: ref }); return; }
   const ns = S.flow.steps.find(x => x.id === id); if (!ns){ drawCanvas(); return; }
   if (ns.next.some(x => x.to === e.to)){ toast("すでにつながっています"); drawCanvas(); return; }
-  s.next.splice(ref.k, 1); pin("exit", side); ns.next.push(e);
+  s.next.splice(ref.k, 1); pin("exit"); ns.next.push(e);
   commit({ form: true, select: null, edge: { sid: ns.id, k: ns.next.length - 1 } });
 }
 // 関連（点線）のつなぎ替え。end = t なら相手を、s なら関連元を id に変える
@@ -1431,7 +1596,7 @@ function endDrag(ev, cancel){
   if (!d.moved){ if (d.link && !cancel){ noClickUntil = performance.now() + 400; plus(d.side); } return; }
   noClickUntil = performance.now() + 400; showLaneHi(null);
   const p = !cancel && inCanvas(ev) && toSvg(ev.clientX, ev.clientY), lane = p && laneAt(p[1]);
-  if (d.reattach){ const hit = p && reattachAt(ev, p, d); if (hit) reattach(d.edge, d.reattach, hit.id, hit.side); else drawCanvas(); return; }
+  if (d.reattach){ const hit = p && reattachAt(ev, p, d); if (hit) reattach(d.edge, d.reattach, hit.id, hit.side, hit.at); else drawCanvas(); return; }
   if (d.link){
     const tgt = p && targetAt(ev, d.id);
     const prev = d.side === "L", rel = !!p && ev.shiftKey;
@@ -1499,11 +1664,36 @@ function undo(redo){
   $("#yamlText").value = S.yamlSrc; setYamlMsg(); $("#flowName").value = S.flow.name;
   refresh(true); markDirty(); toast(redo ? "やり直しました" : "元に戻しました");
 }
-// 入力欄の外でのキー操作：Ctrl+Z / Ctrl+Y、選択中の Delete（削除）・Enter（文言の編集）
+/* Ctrl+C / Ctrl+V：選んだステップを写して貼る。写すのは中身（種類・担当・文言・補足・課題・ツール・色）だけで、矢印・関連は写さない。
+   写したものはこのタブの中で覚えておくので、別のフローにも貼れる */
+let clip = null;
+function copyStep(){
+  const s = curStep(); if (!s) return;
+  clip = { type: s.type, lane: s.lane, label: s.label, note: s.note, issue: s.issue, tool: s.tool, ...(s.color ? { color: s.color } : {}), from: s.id };
+  toast(`「${s.label || s.id}」をコピーしました（Ctrl+V で貼り付け）`);
+}
+// 貼ったステップは、選んでいるステップ（なければ写したステップ）の真下の段に置く。どちらもなければ、同じ担当のレーンのいちばん下に置く
+function pasteStep(){
+  if (!clip) return;
+  const id = newStepId(), ns = { ...blankStep(id, clip.type, clip.lane), label: clip.label, note: clip.note, issue: clip.issue, tool: clip.tool, ...(clip.color ? { color: clip.color } : {}) };
+  const ref = [S.selected, clip.from].find(x => x && S.lastL?.pos.has(x)), P = ref && S.lastL.pos.get(ref);
+  const lane = P ? S.lastL.lanes[P.l] : S.lastL?.lanes.find(l => l.id === clip.lane) || S.lastL?.lanes.find(l => !l.ghost);
+  S.flow.steps.push(ns);
+  if (lane && !lane.ghost){
+    const li = S.lastL.lanes.indexOf(lane);
+    pinSlot(ns, lane, { lane, t: P ? P.t + 1 : S.lastL.rows.filter(w => w.r === li).length, ins: true, drop: true }, P ? P.c : 0);
+  }
+  commit({ form: true, select: id }); scrollCard(id); revealStep(id);
+  toast(`「${ns.label || id}」を貼り付けました（Ctrl+Z で元に戻せます）`);
+}
+// 入力欄の外でのキー操作：Ctrl+Z / Ctrl+Y、Ctrl+C / Ctrl+V（ステップのコピー・貼り付け）、選択中の Delete（削除）・Enter（文言の編集）
 document.addEventListener("keydown", e => {
   if (!S.flow || inlineEd || drag || e.target.closest?.("input, textarea, select, [contenteditable], dialog")) return;
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
   if (mod && !e.altKey && (k === "z" || k === "y")){ e.preventDefault(); undo(k === "y" || e.shiftKey); return; }
+  // 画面の文字を選んでいるときの Ctrl+C は、ふつうの文字のコピーにする
+  if (mod && !e.altKey && !e.shiftKey && k === "c" && S.selected && !S.selEdge && document.getSelection()?.isCollapsed !== false){ e.preventDefault(); copyStep(); return; }
+  if (mod && !e.altKey && !e.shiftKey && k === "v" && clip){ e.preventDefault(); pasteStep(); return; }
   // Shift+←→ で選択中のステップを左右の列へ、Shift+↑↓ で上下の段（レーンの端では隣のレーン）へ動かす（ドラッグと同じ）
   if (e.shiftKey && !mod && !e.altKey && /^Arrow/.test(e.key) && S.selected && !S.selEdge && S.lastL?.pos.has(S.selected)){
     const s = curStep(), P = S.lastL.pos.get(S.selected); if (!s) return;
@@ -1644,12 +1834,188 @@ $("#tab-hist").addEventListener("click", ev => {
   refresh(true); setDirty(true); saveNow().then(renderHist); toast(fmtTime(e.at) + " の版に戻しました");
 });
 
+/* ---------- AsIs／ToBe の比較（ツールバー・比較タブ） ---------- */
+setCmpView(["off", "overlay", "split"].includes(lsGet("flowbook.cmpView")) ? lsGet("flowbook.cmpView") : "overlay");
+setCmpOrient(lsGet("flowbook.cmpOrient") === "tb" ? "tb" : "lr");
+setCmpDim(lsGet("flowbook.cmpDim") !== "0");
+function setView(v){ setCmpView(v); lsSet("flowbook.cmpView", v); updateCmpUi(); drawCanvas(); if (S.flow) fitZoom(); }
+// 差分の数（比較タブ・ツールバー・レポートで使う）
+function cmpCounts(){
+  const n = { add: 0, rep: 0, chg: 0, move: 0, del: S.cmp.d.removed.length };
+  S.cmp.d.steps.forEach(x => { if (x.st !== "same") n[x.st]++; if (x.moved && x.st !== "move" && x.st !== "add") n.move++; });
+  return n;
+}
+const sw = k => `<i class="sw ${k}" aria-hidden="true"></i>`;
+// 比較の帯：表示（なし／変更箇所／並べる）、並べる向き（並べるときだけ）、変わらない所を薄くするか（差分を出すときだけ）、差分の数、AsIs の更新
+function updateCmpUi(){
+  const on = !!S.cmp, bar = $("#cmpBar");
+  bar.hidden = !on; $("#expCmp").hidden = !on;
+  if (!on) return;
+  $("#cmpTitle").textContent = S.cmp.base ? `AsIs「${S.cmp.base.name}」と比較` : "AsIs（写し）と比較";
+  bar.querySelectorAll("[name=cmpView]").forEach(r => { r.checked = r.value === S.cmpView; });
+  bar.querySelectorAll("[name=cmpOrient]").forEach(r => { r.checked = r.value === S.cmpOrient; });
+  $("#cmpOrientGrp").hidden = S.cmpView !== "split";
+  $("#cmpDim").checked = S.cmpDim; $("#cmpDimL").hidden = !cmpOn();
+  const n = cmpCounts(), lg = $("#cmpLegend");
+  lg.hidden = !cmpOn();
+  lg.innerHTML = [["add", "追加", n.add], ["chg", "変更", n.chg + n.rep], ["move", "移動", n.move], ["del", "削除", n.del]].map(([k, t, c]) => `<span${k === "del" && c && S.cmpView !== "split" ? ' class="go" data-cmp-split title="AsIs と並べて見る"' : ""}>${sw(k)}${t} ${c}</span>`).join("");
+  const u = $("#cmpUpd"); u.hidden = !S.cmp.ups.length; u.querySelector(".cnt").textContent = S.cmp.ups.length;
+}
+$("#cmpBar").addEventListener("change", ev => {
+  const t = ev.target;
+  if (t.name === "cmpView") setView(t.value);
+  else if (t.name === "cmpOrient"){ setCmpOrient(t.value); lsSet("flowbook.cmpOrient", t.value); updateCmpUi(); drawCanvas(); fitZoom(); }
+  else if (t.id === "cmpDim"){ setCmpDim(t.checked); lsSet("flowbook.cmpDim", t.checked ? "1" : "0"); drawCanvas(); }
+});
+$("#cmpBar").addEventListener("click", ev => {
+  if (ev.target.closest("[data-cmp-split]")){ setView("split"); return; }
+  if (ev.target.closest("#cmpUpd")) showTab("cmp");
+});
+const laneNm = id => S.flow.lanes.find(l => l.id === id)?.name || S.flow.compare?.snapshot.lanes.find(l => l.id === id)?.name || id;
+const short = t => { t = String(t).replace(/\s*\n\s*/g, " "); return t.length > 40 ? t.slice(0, 39) + "…" : t; };
+const fieldVal = (k, v) => k === "type" ? TYPES[v] || v : k === "lane" ? laneNm(v) : v;
+// ステップの差分（diffFlows の steps の値）を短い文の並びにする
+function diffLines(x){
+  if (!x || x.st === "same") return [];
+  if (x.st === "add") return ["新しいステップ"];
+  const L = [];
+  if (x.src) L.push(`${x.src.map(b => `「${short(b.label || b.id)}」`).join("・")}を置き換え`);
+  if (x.moved) L.push(`担当：${laneNm(x.moved[0])} → ${laneNm(x.moved[1])}`);
+  x.fields.forEach(([k, a, b]) => { if (x.src && k === "label") return; L.push(`${DIFF_FIELDS[k]}：${a ? `「${short(fieldVal(k, a))}」` : "なし"} → ${b ? `「${short(fieldVal(k, b))}」` : "なし"}`); });
+  x.branch.forEach(([a, b]) => L.push(`条件：「${a || "なし"}」→「${b || "なし"}」`));
+  return L;
+}
+// 並べた AsIs（写し）のステップが ToBe でどうなったか
+function refDiffLines(rid){
+  const st = S.cmp.d.base.get(rid);
+  if (st === "del") return ["削除"];
+  if (st === "repsrc") return tobeOf(rid).map(t => `「${short(S.flow.steps.find(s => s.id === t)?.label || t)}」に置き換え`);
+  return st && st !== "same" ? diffLines(S.cmp.d.steps.get(rid)) : [];
+}
+// 比較タブ。cmpOpen は開いている変化点（"t:" + ToBe のステップ ID / "r:" + 削除した AsIs のステップ ID）
+let cmpOpen = null;
+function cmpItems(){
+  const items = [];
+  S.flow.steps.forEach(s => { const x = S.cmp.d.steps.get(s.id); if (x && x.st !== "same") items.push({ key: "t:" + s.id, s, x }); });
+  S.cmp.d.removed.forEach(b => items.push({ key: "r:" + b.id, s: b, x: null }));
+  return items;
+}
+function updateText(u){
+  const lbl = id => `「${short((S.cmp.base.steps.find(s => s.id === id) || S.flow.compare.snapshot.steps.find(s => s.id === id))?.label || id)}」`;
+  switch (u.type){
+    case "laneName": return [`担当名`, `「${u.from}」→「${u.to}」`];
+    case "addLane": return [`担当を追加`, `「${u.lane.name}」`];
+    case "delLane": return [`担当を削除`, `「${u.lane.name}」`];
+    case "field": return [lbl(u.id), `${UPDATE_FIELDS[u.field]}：${u.from ? `「${short(fieldVal(u.field, u.from))}」` : "なし"} → ${u.to ? `「${short(fieldVal(u.field, u.to))}」` : "なし"}`];
+    case "addStep": return [`「${short(u.step.label || u.id)}」`, `ステップを追加`];
+    case "delStep": return [`「${short(u.step.label || u.id)}」`, `ステップを削除`];
+    case "edgeWhen": return [`${lbl(u.from)} → ${lbl(u.to)}`, `条件：「${u.old || "なし"}」→「${u.now || "なし"}」`];
+    default: return [`${lbl(u.from)} → ${lbl(u.to)}`, { addEdge: "矢印を追加", delEdge: "矢印を削除", addRel: "関連を追加", delRel: "関連を削除" }[u.type]];
+  }
+}
+function renderCmp(){
+  const el = $("#tab-cmp"); if (!S.flow) return;
+  const cp = S.flow.compare, others = allFlows().filter(x => x.rid !== S.currentId);
+  const cur = cp ? others.find(x => x.f.id === cp.base) : null;
+  let h = `<div class="sec"><div class="field"><label for="cmpBase">比較元（AsIs）</label><select class="inp" id="cmpBase"><option value="">なし</option>`
+    + (cp && !cur ? `<option value="" selected>（見つかりません）</option>` : "")
+    + others.map(x => `<option value="${esc(x.rid)}" ${x === cur ? "selected" : ""}>${esc(x.f.name)}</option>`).join("") + `</select></div>`;
+  if (cp) h += `<p class="help">${cur ? "" : "比較元が見つからないため、"}${fmtTime(Date.parse(cp.at)) || "—"} の写しと比べています</p>`;
+  h += `</div>`;
+  $("#cmpCount").textContent = S.cmp ? cmpItems().length + S.cmp.ups.length : 0;
+  if (!S.cmp){ el.innerHTML = h; return; }
+  if (S.cmp.ups.length){
+    h += `<div class="sec upd-sec"><div class="sec-head"><h3>AsIs の更新 <span class="count">${S.cmp.ups.length}</span></h3></div><ul class="chg-list">` + S.cmp.ups.map((u, i) => {
+      const [a, b] = updateText(u), t = u.type === "field" ? S.flow.steps.find(s => s.id === u.id) : null;
+      const acts = !u.canApply ? `<button class="btn sm" data-upd="${i}:keep" title="ステップ・矢印の追加と削除は、まだ ToBe に反映できません。必要なら ToBe を直してから押してください">取り込まない</button>`
+        : u.conflict ? `<button class="btn sm" data-upd="${i}:apply">AsIs に合わせる</button><button class="btn sm" data-upd="${i}:keep">ToBe のまま</button>`
+        : `<button class="btn sm primary" data-upd="${i}:apply">反映</button><button class="btn sm" data-upd="${i}:keep">取り込まない</button>`;
+      return `<li class="ui"><div class="ci-top"><span class="lb">${esc(a)}</span></div><div class="ci-d">${esc(b)}</div>${u.conflict && t ? `<div class="ci-d cf">ToBe：「${esc(short(fieldVal(u.field, t[u.field]) || "なし"))}」</div>` : ""}<div class="acts">${acts}</div></li>`;
+    }).join("") + `</ul></div>`;
+  }
+  const items = cmpItems(), n = cmpCounts();
+  h += `<div class="sec"><div class="sec-head"><h3>変化点</h3></div><div class="dsum">${[["add", "追加", n.add], ["chg", "置換", n.rep], ["chg", "変更", n.chg], ["move", "移動", n.move], ["del", "削除", n.del]].map(([k, t, c]) => `<span>${sw(k)}${t} <b>${c}</b></span>`).join("")}</div>`;
+  if (!items.length) h += `<p class="help">AsIs から変わったところはありません。</p>`;
+  h += `<ul class="chg-list">` + items.map(it => {
+    const st = it.x ? it.x.st : "del", tags = [st, ...(it.x?.moved && st !== "move" && st !== "add" ? ["move"] : [])];
+    const ch = it.x ? it.s.change : S.flow.removed?.find(r => r.id === it.s.id), open = cmpOpen === it.key;
+    const lines = it.x ? diffLines(it.x).filter(l => l !== "新しいステップ") : [];
+    let x = `<li class="ci${open ? " open" : ""}"><button class="ci-h" data-ci="${esc(it.key)}" aria-expanded="${open}"><span class="ci-top">${tags.map(k => `<span class="dk ${k}">${DIFF_BADGE[k]}</span>`).join("")}<span class="lb">${esc(it.s.label || "（未記入）")}</span><span class="ln">${esc(it.s.id)}</span></span>`
+      + (lines.length ? `<span class="ci-d">${lines.map(l => `<span>${esc(l)}</span>`).join("")}</span>` : "")
+      + (ch?.kind || ch?.reason ? `<span class="why">${ch.kind ? `<b>${KINDS[ch.kind]}</b>` : ""}${esc(ch.reason || "")}</span>` : "") + `</button>`;
+    if (open){
+      const k = esc(it.key);
+      x += `<div class="ci-f"><div class="field"><label for="ck-${k}">変更の種類</label><select class="inp" id="ck-${k}" data-cf="kind"><option value=""></option>${Object.entries(KINDS).map(([v, t]) => `<option value="${v}" ${ch?.kind === v ? "selected" : ""}>${t}</option>`).join("")}</select></div>`
+        + `<div class="field"><label for="cr-${k}">理由</label><textarea class="inp" id="cr-${k}" data-cf="reason" rows="2">${esc(ch?.reason || "")}</textarea></div>`;
+      // AsIs の対応（from）：ID が AsIs にないステップ（追加・置換）だけ。候補は ToBe に同じ ID のない AsIs のステップ
+      if (it.x && (st === "add" || st === "rep")){
+        const from = it.s.from || [], cand = cp.snapshot.steps.filter(b => !S.flow.steps.some(t => t.id === b.id) && !from.includes(b.id));
+        x += `<div class="field"><span class="lbl">AsIs の対応</span><div class="chips">${from.map(id => `<span>${esc(id)} ${esc(short(cp.snapshot.steps.find(b => b.id === id)?.label || ""))}<button class="mini" data-from-del="${esc(id)}" aria-label="外す">✕</button></span>`).join("")}`
+          + (cand.length ? `<select class="inp" data-from-add aria-label="AsIs の対応を追加"><option value="">＋</option>${cand.map(b => `<option value="${esc(b.id)}">${esc(b.id)}：${esc(short(b.label || ""))}</option>`).join("")}</select>` : "") + `</div></div>`;
+      }
+      x += `</div>`;
+    }
+    return x + `</li>`;
+  }).join("") + `</ul></div>`;
+  el.innerHTML = h;
+}
+// 開いている変化点の、変更の種類と理由を書く先（ToBe のステップの change か、削除した AsIs のステップの removed）
+function cmpTarget(){
+  if (!cmpOpen) return null;
+  const id = cmpOpen.slice(2);
+  if (cmpOpen[0] === "t") return S.flow.steps.find(s => s.id === id) || null;
+  let r = (S.flow.removed ||= []).find(x => x.id === id);
+  if (!r){ r = { id }; S.flow.removed.push(r); }
+  return r;
+}
+function setChange(field, v){
+  const t = cmpTarget(); if (!t) return;
+  const ch = cmpOpen[0] === "t" ? (t.change ||= {}) : t;
+  if (v.trim()) ch[field] = v; else delete ch[field];
+  if (cmpOpen[0] === "t" && !t.change.kind && !t.change.reason) delete t.change;
+  if (S.flow.removed) S.flow.removed = S.flow.removed.filter(r => r.kind || r.reason);
+  if (!S.flow.removed?.length) delete S.flow.removed;
+}
+$("#tab-cmp").addEventListener("click", ev => {
+  if (!S.flow) return;
+  const c = ev.target.closest("[data-ci]");
+  if (c){
+    const key = c.dataset.ci; cmpOpen = cmpOpen === key ? null : key;
+    if (key[0] === "t" && cmpOpen){ setSelected(key.slice(2)); setSelEdge(null); renderForm(); drawCanvas(); revealStep(key.slice(2)); }
+    renderCmp(); return;
+  }
+  const u = ev.target.closest("[data-upd]");
+  if (u){
+    const [i, how] = u.dataset.upd.split(":"), item = S.cmp?.ups[+i];
+    if (item && resolveUpdate(S.flow, S.cmp.base, item, how, nowIso())) commit({ form: true });
+    return;
+  }
+  const fd = ev.target.closest("[data-from-del]");
+  if (fd){ const s = cmpTarget(); s.from = (s.from || []).filter(x => x !== fd.dataset.fromDel); if (!s.from.length) delete s.from; commit({ form: true }); }
+});
+$("#tab-cmp").addEventListener("change", async ev => {
+  const t = ev.target; if (!S.flow) return;
+  if (t.id === "cmpBase"){
+    if (!t.value){ if (!S.flow.compare) return; delete S.flow.compare; commit({ form: true }); toast("比較をやめました（Ctrl+Z で元に戻せます）"); return; }
+    const b = await ensureFlowId(t.value); if (!b) { toast("このフローは読み取れないため、比較元にできません"); renderCmp(); return; }
+    if (!S.flow.id) S.flow.id = newFlowId();
+    setBase(S.flow, b, nowIso()); if (S.cmpView === "off") setCmpView("overlay");
+    commit({ form: true }); return;
+  }
+  if (t.dataset.cf === "kind"){ setChange("kind", t.value); commit({ form: true }); return; }
+  if (t.dataset.fromAdd != null && t.value){ const s = cmpTarget(); (s.from ||= []).push(t.value); commit({ form: true }); }
+});
+$("#tab-cmp").addEventListener("input", ev => { if (ev.target.dataset.cf === "reason" && S.flow){ setChange("reason", ev.target.value); commit(); } });
+// 理由を書き終えたら、一覧の表示（理由の行）を描き直す
+$("#tab-cmp").addEventListener("focusout", ev => { if (ev.target.dataset.cf === "reason") setTimeout(() => { if (!$("#tab-cmp").contains(document.activeElement)) renderCmp(); }); });
+
 /* ---------- tabs ---------- */
 function showTab(t){
   setTab(t);
   document.querySelectorAll("[data-tab]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
-  ["edit", "setup", "yaml", "check", "hist"].forEach(k => $("#tab-" + k).hidden = k !== t);
+  ["edit", "setup", "yaml", "check", "cmp", "hist"].forEach(k => $("#tab-" + k).hidden = k !== t);
   if (t === "hist") renderHist();
+  if (t === "cmp") renderCmp();
   if (t === "edit" && S.flow) renderForm();
   if (t === "yaml" && S.flow && document.activeElement !== $("#yamlText") && $("#yamlText").value !== S.yamlSrc){ $("#yamlText").value = S.yamlSrc; setYamlMsg(); }
 }
@@ -1722,6 +2088,34 @@ function markdown(f){
   md += "\n## 定義（YAML）\n\nこのブロックを業務フロー帳の「インポート」で取り込むと、編集を再開できます。\n\n```yaml\n" + S.yamlSrc.replace(/\n?$/, "\n") + "```\n";
   return md;
 }
+/* 比較レポート：AsIs（写し）と ToBe の差分を、変化点の表と、差分の色を付けた 2 つの図（Mermaid）にまとめる */
+function mermaidDiff(f, opt){
+  const nid = id => "n_" + id.replace(/[^A-Za-z0-9_]/g, "_"), cls = {};
+  opt.steps.forEach((st, id) => { const k = st === "rep" || st === "repsrc" ? "chg" : st; if (k !== "same") (cls[k] ||= []).push(nid(id)); });
+  opt.moved.forEach(id => { if (!opt.steps.get(id) || opt.steps.get(id) === "same") (cls.move ||= []).push(nid(id)); });
+  const def = { add: "stroke:#2C7647,stroke-width:3px", chg: "stroke:#A8620C,stroke-width:3px", move: "stroke:#3F6E8C,stroke-width:3px", del: "stroke:#B2352A,stroke-width:2px,stroke-dasharray:5 3" };
+  return mermaid(f) + Object.entries(cls).map(([k, ids]) => `  classDef ${k} ${def[k]}\n  class ${ids.join(",")} ${k}\n`).join("");
+}
+function cmpMarkdown(f){
+  const cp = f.compare, snap = { name: S.cmp.base?.name || "比較元", lanes: cp.snapshot.lanes, steps: cp.snapshot.steps };
+  const cell = t => String(t || "").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\n/g, " "), n = cmpCounts();
+  let md = `# ${f.name} 比較レポート\n\n- AsIs：${snap.name}（${fmtTime(Date.parse(cp.at))} 時点・${snap.steps.length} ステップ）\n- ToBe：${f.name}（${f.steps.length} ステップ）\n`;
+  if (S.cmp.ups.length) md += `- AsIs のその後の更新で、取り込んでいないもの：${S.cmp.ups.length} 件\n`;
+  md += `- 作成：${fmtTime(Date.now())}\n\n## 変化点\n\n追加 ${n.add}・置換 ${n.rep}・変更 ${n.chg}・移動 ${n.move}・削除 ${n.del}\n\n`;
+  const items = cmpItems();
+  if (items.length){
+    md += "| 区分 | ID | ステップ | 担当 | 変わったこと | 変更の種類 | 理由 |\n|---|---|---|---|---|---|---|\n";
+    items.forEach(it => {
+      const st = it.x ? it.x.st : "del", ch = it.x ? it.s.change : f.removed?.find(r => r.id === it.s.id);
+      const tags = [st, ...(it.x?.moved && st !== "move" && st !== "add" ? ["move"] : [])].map(k => DIFF_BADGE[k]).join("・");
+      md += `| ${tags} | ${it.s.id} | ${cell(it.s.label)} | ${cell(laneNm(it.s.lane))} | ${cell(it.x ? diffLines(it.x).join(" / ") : "")} | ${ch?.kind ? KINDS[ch.kind] : ""} | ${cell(ch?.reason)} |\n`;
+    });
+  }
+  md += "\n## フロー図（ToBe）\n\n```mermaid\n" + mermaidDiff(f, diffOpt(S.cmp.d, "tobe")) + "```\n\n## フロー図（AsIs）\n\n```mermaid\n" + mermaidDiff(snap, diffOpt(S.cmp.d, "ref")) + "```\n";
+  const iss = snap.steps.filter(s => s.issue);
+  if (iss.length) md += "\n## AsIs の課題\n\n" + iss.map(s => `- ${s.label || s.id}（${s.id}）：${String(s.issue).replace(/\n/g, " ")}`).join("\n") + "\n";
+  return md;
+}
 async function copyText(text, label){
   try { await navigator.clipboard.writeText(text); toast(label + "をコピーしました"); }
   catch { showTab("yaml"); const t = $("#yamlText"); if (label === "YAML"){ t.focus(); t.select(); toast("コピーできませんでした。選択した YAML を手動でコピーしてください"); } else toast("コピーできませんでした"); }
@@ -1772,6 +2166,7 @@ $("#exportMenu").addEventListener("click", ev => {
     case "image": openImgDialog(); break;
     case "save-yaml": exportFlow(safeName(S.flow.name) + ".yaml", S.yamlSrc.replace(/\n?$/, "\n")); break;
     case "save-md": exportFlow(safeName(S.flow.name) + ".md", markdown(S.flow)); break;
+    case "save-cmp": if (S.cmp) saveFile(safeName(S.flow.name) + "_比較.md", cmpMarkdown(S.flow)); break;
   }
 });
 
@@ -1834,7 +2229,7 @@ const LEGEND_USE = {
   流れ: L => L.edges.some(E => !E.assoc), 関連: L => L.edges.some(E => E.assoc),
 };
 const LG = { font: 11, gap: 14, row: 22 };
-function legendItems(L, multi){
+function legendItems(L, multi, diff){
   const items = [];
   document.querySelectorAll(".legend > span:not(.sep)").forEach(sp => {
     const t = sp.textContent.trim(), svg = sp.querySelector("svg");
@@ -1842,6 +2237,13 @@ function legendItems(L, multi){
     const [, , w, h] = svg.getAttribute("viewBox").split(/\s+/).map(Number);
     items.push({ t, w, h, inner: svg.innerHTML });
   });
+  // 差分の色（AsIs との比較）：図に出てくるものだけ。削除したステップは図にないので、名前を並べる
+  if (diff){
+    const has = k => [...diff.steps.values()].some(st => (DIFF_COLOR[st] || "") === DIFF_COLOR[k]) || (k === "move" && diff.moved.size);
+    [["add", "追加"], ["chg", "変更・置換"], ["move", "移動"]].forEach(([k, t]) => { if (has(k)) items.push({ t, w: 22, h: 14, inner: `<rect x="2" y="1.5" width="18" height="11" rx="3" fill="var(--surface)" stroke="var(${DIFF_COLOR[k]})" stroke-width="2"/>` }); });
+    const del = S.cmp.d.removed.map(b => b.label || b.id);
+    if (del.length) items.push({ t: "削除：" + short(del.join("、")), w: 22, h: 14, inner: `<rect x="2" y="1.5" width="18" height="11" rx="3" fill="var(--surface)" stroke="var(--bad)" stroke-width="2" stroke-dasharray="4 2"/>` });
+  }
   if (multi) items.push({ t: "結合子（別の枚へ続く）", w: 22, h: 14, inner: `<circle cx="11" cy="7" r="6.2" fill="var(--surface)" stroke="var(--ink)" stroke-width="1.2"/><text x="11" y="7.4" text-anchor="middle" dominant-baseline="middle" font-size="7.5" font-weight="700" fill="var(--ink)">A</text>` });
   items.forEach(it => { it.ww = it.w + 4 + strW(it.t, LG.font); });
   return items;
@@ -1853,7 +2255,7 @@ function paginate(L, o, name){
   const th = o.title || o.legend ? IMG.th : 0;
   let P = pagesAt(L, o, th, 0);
   if (!P || !o.legend) return P;
-  let items = legendItems(L, P.pages.length > 1);
+  let items = legendItems(L, P.pages.length > 1, o.diff && imgDiff());
   const n = P.pages.length, room = n > 1 ? P.PW - 2 * P.M : L.width;
   const titleW = o.title ? strW(name + (n > 1 ? `（${n}/${n}）` : ""), 15, true) + 24 : 0;
   P.legendRow = 1;
@@ -1861,7 +2263,7 @@ function paginate(L, o, name){
     // 分割しないときは、凡例が図より広ければ画像の幅を広げる
     P = pagesAt(L, o, o.title ? th + LG.row : th, legendW(items));
     if (!P) return P;
-    items = legendItems(L, P.pages.length > 1);
+    items = legendItems(L, P.pages.length > 1, o.diff && imgDiff());
     P.legendRow = o.title ? 2 : 1;
   }
   P.legend = items;
@@ -1975,7 +2377,7 @@ function pageSvg(f, L, P, links, i, o){
   s += `<g transform="translate(${ox} ${oy})">`;
   // 結合子の帯にもレーンの帯を伸ばしておく（本体は切り出した範囲の上に重なる）
   L.lanes.forEach((l, k) => { const y = L.laneY[k]; s += `<rect x="${xa}" y="${y}" width="${xb - xa}" height="${L.laneY[k + 1] - y}" fill="${k % 2 ? "var(--lane-b)" : "var(--lane-a)"}"/>`; if (k) s += `<line x1="${xa}" x2="${xb}" y1="${y}" y2="${y}" stroke="var(--line-strong)"/>`; });
-  s += `<g clip-path="url(#pg)">${diagramBodySvg(f, { ...L, edges: links.local[i] }, Math.max(L.width, 420), H, { info: o.info })}</g>`;
+  s += `<g clip-path="url(#pg)">${diagramBodySvg(f, { ...L, edges: links.local[i] }, Math.max(L.width, 420), H, { info: o.info, diff: o.diff ? imgDiff() : null })}</g>`;
   // 切れ目：前の枚・次の枚へ続くことを破線で示す
   if (cl) s += `<line x1="${p.x0}" x2="${p.x0}" y1="0" y2="${H}" stroke="var(--line-strong)" stroke-dasharray="4 4"/>`;
   if (cr) s += `<line x1="${p.x1}" x2="${p.x1}" y1="0" y2="${H}" stroke="var(--line-strong)" stroke-dasharray="4 4"/>`;
@@ -2043,11 +2445,12 @@ function svgToPng(svg, w, h, dpi){
 
 /* 出力画面。設定（貼る場所・文字の大きさ・見出し・凡例）はこの端末で覚えておく。課題の吹き出し・ツール・手段は、開いたときの「課題を表示」「ツール・手段を表示」に合わせる */
 const IMG_KEY = "flowbook.imgExport";
+const imgDiff = () => S.cmp ? diffOpt(S.cmp.d, "tobe") : null;
 let imgOpt = null, imgPlan = null, imgUrls = [], imgPngs = [];
 function openImgDialog(){
   let o = {}; try { o = JSON.parse(lsGet(IMG_KEY) || "{}") || {}; } catch {}
   const hasIssue = S.flow.steps.some(s => s.issue && s.issue.trim()), hasIn = S.flow.steps.some(hasTool);
-  imgOpt = { size: IMG_SIZES[o.size] ? o.size : "16:9", pt: [8, 10, 12].includes(o.pt) ? o.pt : 8, title: o.title !== false, legend: !!o.legend, issues: S.showIssues && hasIssue, info: S.showInfo && hasIn };
+  imgOpt = { size: IMG_SIZES[o.size] ? o.size : "16:9", pt: [8, 10, 12].includes(o.pt) ? o.pt : 8, title: o.title !== false, legend: !!o.legend, issues: S.showIssues && hasIssue, info: S.showInfo && hasIn, diff: cmpOn() };
   const d = $("#imgDlg");
   d.querySelectorAll("[name=imgSize]").forEach(r => { r.checked = r.value === imgOpt.size; });
   d.querySelectorAll("[name=imgPt]").forEach(r => { r.checked = +r.value === imgOpt.pt; });
@@ -2057,6 +2460,7 @@ function openImgDialog(){
   iss.closest("label").title = hasIssue ? "" : "課題の書かれたステップがありません";
   const inf = d.querySelector("[name=imgInfo]"); inf.checked = imgOpt.info; inf.disabled = !hasIn;
   inf.closest("label").title = hasIn ? `${TOOL_NAME}を、ステップの中に入れます` : `${TOOL_NAME}の書かれたステップがありません`;
+  const dif = d.querySelector("[name=imgDiff]"); dif.checked = imgOpt.diff; dif.closest("label").hidden = !S.cmp;
   renderImgDialog();
   d.showModal();
 }
@@ -2123,6 +2527,7 @@ async function saveImgs(){
     else if (t.name === "imgLegend") imgOpt.legend = t.checked;
     else if (t.name === "imgIssues") imgOpt.issues = t.checked;
     else if (t.name === "imgInfo") imgOpt.info = t.checked;
+    else if (t.name === "imgDiff") imgOpt.diff = t.checked;
     else return;
     lsSet(IMG_KEY, JSON.stringify({ size: imgOpt.size, pt: imgOpt.pt, title: imgOpt.title, legend: imgOpt.legend }));
     renderImgDialog();
