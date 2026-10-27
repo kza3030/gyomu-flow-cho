@@ -27,23 +27,18 @@
       <span class="pill" id="saveState">読み込み中</span>
     </div>
     <div class="bar-actions">
-      <button class="btn" id="folderBtn" aria-haspopup="true" aria-expanded="false" title="作業フォルダ（フローの保存先）" hidden><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 3.5h4.5l1.5 1.5h7v8h-13z"/></svg><span id="folderName"></span></button>
-      <div class="menu" id="folderMenu" hidden>
-        <button data-fm="reload">フォルダを読み込み直す<small>ほかのアプリで変えたファイルを反映します</small></button>
-        <button data-fm="pick">別のフォルダを開く<small>今のフォルダへの変更を保存してから切り替えます</small></button>
-      </div>
+      <button class="btn" id="folderBtn" title="別の作業フォルダを開く" hidden><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 3.5h4.5l1.5 1.5h7v8h-13z"/></svg><span id="folderName"></span></button>
       <button class="btn" id="importBtn" title="YAML / JSON ファイルを読み込んで、新しいフローとして追加します"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M2.5 11v2.5h11V11"/></svg>インポート</button>
       <input type="file" id="importFile" accept=".yaml,.yml,.json,.txt,.md" multiple hidden>
       <button class="btn" id="exportBtn" aria-haspopup="true" aria-expanded="false" title="YAML などでコピー・ファイルに保存します" disabled><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 10V2M4.5 5.5 8 2l3.5 3.5M2.5 11v2.5h11V11"/></svg>エクスポート</button>
       <div class="menu" id="exportMenu" hidden>
-        <button data-exp="copy-yaml">YAMLをコピー<small>Git やチケットに貼って差分管理</small></button>
-        <button data-exp="copy-mermaid">Mermaid記法をコピー<small>Notion・GitHub・Wiki で図として表示</small></button>
+        <button data-exp="copy-yaml">YAMLをコピー</button>
+        <button data-exp="copy-mermaid">Mermaid記法をコピー</button>
         <hr>
-        <button data-exp="image">画像として出力（PNG）…<small>PowerPoint などに貼る。長いフローは複数枚に分けます</small></button>
+        <button data-exp="image">画像として出力（PNG）…</button>
         <hr>
-        <button data-exp="save-yaml">YAMLファイルとして保存（.yaml）<small>あとで「インポート」から読み込んで編集を再開できます</small></button>
+        <button data-exp="save-yaml">YAMLファイルとして保存（.yaml）</button>
         <button data-exp="save-md">手順書として保存（.md）<small>フロー図・ステップ一覧・YAML定義をまとめた1ファイル</small></button>
-        <button data-exp="save-json">データとして保存（.json）<small>他システムへの取り込み用</small></button>
       </div>
     </div>
   </header>
@@ -61,7 +56,7 @@
         <button class="btn ghost sm" data-new="order">受注〜出荷・請求</button>
         <p class="store-note" id="storeNote"></p>
         <!-- アプリのバージョン。修正のたびに更新する（ルールは AGENTS.md） -->
-        <p class="ver" title="業務フロー帳のバージョン">業務フロー帳 v2.2.0</p>
+        <p class="ver" title="業務フロー帳のバージョン">v2.3.0</p>
       </div>
     </aside>
     <div class="splitter" id="splitSide" role="separator" aria-orientation="vertical" aria-label="フロー一覧の幅（ダブルクリックで元に戻す）" title="ドラッグで幅を変更・ダブルクリックで元に戻す" tabindex="0"></div>
@@ -71,7 +66,9 @@
     <section class="stage">
       <div class="notice" id="notice" role="status" hidden></div>
       <div class="stage-tools">
-        <div class="legend" aria-label="記号の凡例">
+        <!-- 凡例。ふだんはたたんでおく（開け閉めはこの端末で覚えておく）。画像出力の凡例も、ここの記号を読む -->
+        <button class="legend-toggle" id="legendToggle" aria-expanded="false" aria-controls="legend"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M3 2 7 5 3 8"/></svg>凡例</button>
+        <div class="legend" id="legend" aria-label="記号の凡例" hidden>
           <span><svg viewBox="0 0 22 14"><rect x="1" y="2" width="20" height="10" rx="5" fill="var(--accent)"/></svg>開始</span>
           <span><svg viewBox="0 0 22 14"><rect x="1" y="2" width="20" height="10" rx="2" fill="var(--surface)" stroke="var(--ink)"/></svg>作業</span>
           <span><svg viewBox="0 0 22 14"><path d="M11 1 21 7 11 13 1 7Z" fill="var(--surface)" stroke="var(--ink)"/></svg>判断</span>
@@ -123,7 +120,7 @@
         <div class="yaml-wrap">
           <p class="help" style="margin:0">このテキストがフローの正本です。<code>next</code> にステップIDを書くとつながり、<code>when</code> で分岐条件を付けられます。コメント（<code>#</code>）もそのまま保存されます。</p>
           <textarea class="yaml" id="yamlText" spellcheck="false" aria-label="YAML定義"></textarea>
-          <div class="yaml-msg" id="yamlMsg">編集すると図と保存に反映されます。</div>
+          <div class="yaml-msg" id="yamlMsg"></div>
         </div>
       </div>
       <div class="tabpanel" id="tab-check" hidden></div>
@@ -152,7 +149,6 @@
         <label><input type="checkbox" name="imgLegend">凡例</label>
         <label><input type="checkbox" name="imgIssues">課題の吹き出し</label>
         <label><input type="checkbox" name="imgInfo">ツール・手段</label>
-        <label><input type="checkbox" name="imgIds">ステップID</label>
       </div></fieldset>
     </div>
     <div class="img-note">

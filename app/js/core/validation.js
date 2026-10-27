@@ -21,15 +21,11 @@ function validate(f){
     (s.related || []).forEach(to => {
       if (!ids.has(to)) push("bad", `「${nm}」の関連「${to}」というステップはありません。`, s.id);
       else if (to === s.id) push("info", `「${nm}」の関連に自分自身が入っています。`, s.id);
-      else if (s.next.some(e => e.to === to)) push("info", `「${nm}」から「${to}」へは流れの矢印があるので、関連の点線は描きません。`, s.id);
     });
     // 帳票・データは流れに入らない（関連で結ぶだけ）ので、次がなくても行き止まりとしない
     if (s.type !== "end" && !isArtifact(s) && !s.next.length) push("info", `「${nm}」の次のステップが決まっていません（行き止まり）。`, s.id);
-    if (s.type === "end" && s.next.length) push("info", `終了「${nm}」の後にもステップがつながっています。`, s.id);
-    if (s.type === "decision"){
-      if (s.next.length < 2) push("warn", `判断「${nm}」の分岐が${s.next.length}本です。2本以上にしてください。`, s.id);
-      else if (s.next.some(e => !e.when)) push("info", `判断「${nm}」に条件の書かれていない分岐があります。`, s.id);
-    }
+    // 図を見ればわかること（終了の後の矢印・条件のない分岐・ステップのない担当など）は知らせない
+    if (s.type === "decision" && s.next.length < 2) push("warn", `判断「${nm}」の分岐が${s.next.length}本です。2本以上にしてください。`, s.id);
   });
   if (starts.length){
     const seen = new Set(), stack = starts.map(s => s.id), byId = new Map(f.steps.map(s => [s.id, s]));
@@ -39,8 +35,6 @@ function validate(f){
     while (stack.length){ const id = stack.pop(); if (seen.has(id)) continue; seen.add(id); (byId.get(id)?.next || []).forEach(e => stack.push(e.to)); (rel.get(id) || []).forEach(to => { if (isArtifact(byId.get(to))) stack.push(to); }); }
     f.steps.forEach(s => { if (!seen.has(s.id)) push("warn", `「${s.label || s.id}」は開始からたどり着けません。`, s.id); });
   }
-  const used = new Set(f.steps.map(s => s.lane));
-  f.lanes.forEach(l => { if (!used.has(l.id)) push("info", `担当「${l.name}」にはステップがありません。`); });
   const rank = { bad: 0, warn: 1, info: 2 };
   return out.sort((a, b) => rank[a.level] - rank[b.level]);
 }
