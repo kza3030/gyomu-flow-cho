@@ -63,6 +63,30 @@ function artifactLinks(f){
   });
   return moved;
 }
+/* 流れの中のステップ X（id）の種類を type にする。帳票・データ・データストアに変えるとき、X から出る流れが 1 本（X→Q）なら、
+   X へ入っていた流れ（P→X）を P→Q につなぎ直し（条件・出る辺は残し、入る辺は X→Q のものにする）、X は P と関連で結ぶ。
+   流れの途中から帳票を抜き出して、P と Q の流れが切れないようにする（bpmn-js がステップを消すときに前後をつなぎ直すのにならう）。
+   出る流れが 0 本・2 本以上のときは種類を変えるだけ（残った流れは artifactLinks が関連に移す）。つなぎ直したら true */
+function toArtifact(f, id, type){
+  const x = f.steps.find(s => s.id === id); if (!x) return false;
+  const was = isArtifact(x); x.type = type;
+  if (was || !isArtifact(x) || x.next.length !== 1 || x.next[0].to === x.id) return false;
+  const out = x.next[0];
+  f.steps.forEach(p => {
+    if (p === x || !p.next.some(e => e.to === x.id)) return;
+    p.next = p.next.filter(e => {
+      if (e.to !== x.id) return true;
+      // 自分へ戻る矢印・同じ相手への 2 本目の矢印になるなら、つなぎ直さずに外す
+      if (p.id === out.to || p.next.some(o => o.to === out.to)) return false;
+      e.to = out.to;
+      if (out.entry) e.entry = out.entry; else delete e.entry;
+      return true;
+    });
+    if (!(p.related ||= []).includes(x.id) && !(x.related || []).includes(p.id)) p.related.push(x.id);
+  });
+  x.next = [];
+  return true;
+}
 function normalize(raw){
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("先頭は name: / lanes: / steps: を持つ形にしてください。");
   const f = { name: String(raw.name ?? "無題のフロー"), owner: raw.owner != null ? String(raw.owner) : "", description: raw.description != null ? String(raw.description) : "", lanes: [], steps: [], memo: raw.memo != null ? String(raw.memo) : "" };
@@ -127,5 +151,5 @@ function parseYaml(text){ return normalize(jsyaml.load(text)); }
 
 function uid(prefix, taken){ let n = 1; while (taken.has(prefix + n)) n++; return prefix + n; }
 
-Object.assign(globalThis.Flowbook ??= {}, { TYPES, typeIn, TOOL_NAME, hasTool, COLORS, colorIn, colorable, SIDES, SIDE_NAME, sideIn, sideOut, normNext, normRelated, ARTIFACT, isArtifact, artifactLinks, normalize, toPlain, toYaml, parseYaml, uid });
+Object.assign(globalThis.Flowbook ??= {}, { TYPES, typeIn, TOOL_NAME, hasTool, COLORS, colorIn, colorable, SIDES, SIDE_NAME, sideIn, sideOut, normNext, normRelated, ARTIFACT, isArtifact, artifactLinks, toArtifact, normalize, toPlain, toYaml, parseYaml, uid });
 })();

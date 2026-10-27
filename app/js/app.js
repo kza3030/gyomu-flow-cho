@@ -4,7 +4,7 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const {
   TEMPLATES,
-  TYPES, TOOL_NAME, hasTool, COLORS, colorable, SIDES, sideIn, sideOut, normNext, isArtifact, artifactLinks, normalize, toYaml, parseYaml, uid,
+  TYPES, TOOL_NAME, hasTool, COLORS, colorable, SIDES, sideIn, sideOut, normNext, isArtifact, artifactLinks, toArtifact, normalize, toYaml, parseYaml, uid,
   validate,
   G, LB, CO, DB_RY, textW, edgeLabel, labelCut, linkedIds, layout, calloutPlan, topY, portAt, placeLabel, wrapText, wrapLabel
 } = Flowbook; // js/core/ の各ファイルで定義
@@ -103,6 +103,22 @@ const refOf = (sid, key) => ({ sid, k: parseInt(String(key).replace(/^r/, ""), 1
 const isRef = (E, ref) => !!ref && E.s.id === ref.sid && E.k === ref.k && E.assoc === !!ref.rel;
 // ref の線のつなぎ先の id。もうない線なら undefined
 const refTo = ref => { const s = ref && S.flow?.steps.find(x => x.id === ref.sid); return s && (ref.rel ? s.related?.[ref.k] : s.next[ref.k]?.to); };
+// 折れ線 pts の、端から長さの割合 r の点
+function alongPts(pts, r){
+  const seg = pts.slice(1).map((q, i) => Math.hypot(q[0] - pts[i][0], q[1] - pts[i][1]));
+  let d = seg.reduce((a, b) => a + b, 0) * r;
+  for (let i = 0; i < seg.length; i++){
+    if (d <= seg[i] || i === seg.length - 1){ const t = seg[i] ? Math.min(1, d / seg[i]) : 0, [a, b] = [pts[i], pts[i + 1]]; return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; }
+    d -= seg[i];
+  }
+  return pts[0];
+}
+// 矢印の＋を置く点：真ん中から順に、条件ラベルと重ならない所を探す（どこも重なれば真ん中）
+function edgePlusAt(E){
+  const off = ([x, y]) => !E.label || Math.abs(x - E.lp[0]) > E.label.w / 2 + 12 || Math.abs(y - E.lp[1]) > E.label.h / 2 + 12;
+  for (const r of [0.5, 0.35, 0.65, 0.25, 0.75]){ const q = alongPts(E.pts, r); if (off(q)) return q; }
+  return alongPts(E.pts, 0.5);
+}
 // 関連の線の見た目：点線と、塗らない矢じり（BPMN の関連にならう）
 const ASSOC_DASH = 'stroke-dasharray="2 3"';
 /* 図の本体（レーンの帯・矢印・ステップ・条件ラベル・課題の吹き出し）。座標は配置 L のまま（帯は x = 0〜W に描く）。
@@ -135,7 +151,7 @@ function diagramBodySvg(f, L, W, H, o){
   });
   // 細い矢印でもダブルクリックしやすいよう、透明の太い線を重ねる（data-k は edgeKey）
   if (ui) edges.forEach(E => {
-    const tip = E.assoc ? "関連（点線）\nクリックで選び、端のドラッグでつなぎ替え" : E.label ? `条件「${E.label.t}」\nダブルクリックで条件を編集` : "ダブルクリックで条件を追加";
+    const tip = E.assoc ? "関連（点線）\nクリックで選び、端のドラッグでつなぎ替え" : (E.label ? `条件「${E.label.t}」\nダブルクリックで条件を編集` : "ダブルクリックで条件を追加") + "\nクリックで選ぶと、＋で間にステップを入れられる";
     s += `<path class="ehit" data-edge="${esc(E.s.id)}" data-k="${edgeKey(E)}" d="${pathD(E.pts)}"><title>${esc(tip)}</title></path>`;
   });
   L.steps.forEach(st => {
@@ -196,11 +212,11 @@ function diagramBodySvg(f, L, W, H, o){
     const p = L.pos.get(ss.id), li = f.lanes.findIndex(l => l.id === ss.lane), above = li > 0 ? f.lanes[li - 1] : null, below = li >= 0 ? f.lanes[li + 1] : null;
     const handle = (side, x, y, tip) => `<g class="handle" data-handle="${side}" data-x="${x}" data-y="${y}" tabindex="0" role="button" aria-label="${esc(tip)}"><title>${esc(tip)}</title><circle cx="${x}" cy="${y}" r="9"/><path d="M${x - 4} ${y}h8M${x} ${y - 4}v8"/></g>`;
     const own = li >= 0 ? f.lanes[li].name : "同じ担当";
-    if (ss.type !== "start") s += handle("L", Math.max(p.x - 22, G.label + 11), p.y + p.h / 2, `前のステップを追加（${own}）・ドラッグで別のステップからつなぐ`);
+    if (ss.type !== "start") s += handle("L", Math.max(p.x - 22, G.label + 11), p.y + p.h / 2, `前のステップを追加（${own}。種類を選ぶ）・ドラッグで別のステップからつなぐ`);
     if (ss.type !== "end"){
-      s += handle("R", p.x + p.w + 22, p.y + p.h / 2, `次のステップを追加（${own}）・ドラッグで別のステップにつなぐ`);
-      if (above) s += handle("T", p.x + p.w / 2, p.y - 22, `次のステップを「${above.name}」に追加・ドラッグで別のステップにつなぐ`);
-      if (below) s += handle("B", p.x + p.w / 2, p.y + p.h + 22, `次のステップを「${below.name}」に追加・ドラッグで別のステップにつなぐ`);
+      s += handle("R", p.x + p.w + 22, p.y + p.h / 2, `次のステップを追加（${own}。種類を選ぶ）・ドラッグで別のステップにつなぐ`);
+      if (above) s += handle("T", p.x + p.w / 2, p.y - 22, `次のステップを「${above.name}」に追加（種類を選ぶ）・ドラッグで別のステップにつなぐ`);
+      if (below) s += handle("B", p.x + p.w / 2, p.y + p.h + 22, `次のステップを「${below.name}」に追加（種類を選ぶ）・ドラッグで別のステップにつなぐ`);
     }
   }
   // 選択中の矢印の両端に丸。ドラッグでつなぎ替え・出入りする辺の指定
@@ -209,6 +225,11 @@ function diagramBodySvg(f, L, W, H, o){
     const end = (k, [x, y], tip) => `<circle class="ehandle" data-end="${k}" cx="${x}" cy="${y}" r="6"><title>${esc(tip)}</title></circle>`;
     s += end("s", SE.pts[0], SE.assoc ? "ドラッグで関連元のステップを変える" : "ドラッグで出るステップ・出る辺を変える");
     s += end("t", SE.pts[SE.pts.length - 1], SE.assoc ? "ドラッグで関連先のステップを変える" : "ドラッグでつなぎ先・入る辺を変える");
+    // 流れの矢印の途中に＋。押すと、選んだ種類のステップを矢印の間に入れる（関連の線には出さない）
+    if (!SE.assoc){
+      const [x, y] = edgePlusAt(SE), tip = "この矢印の間にステップを入れる（種類を選ぶ）";
+      s += `<g class="handle eplus" data-eplus="1" tabindex="0" role="button" aria-label="${esc(tip)}"><title>${esc(tip)}</title><circle cx="${x}" cy="${y}" r="9"/><path d="M${x - 4} ${y}h8M${x} ${y - 4}v8"/></g>`;
+    }
   }
   return s + pops;
 }
@@ -593,9 +614,9 @@ function updateHint(){
   h.innerHTML = S.selEdge?.rel
     ? `両端の丸をドラッグしてつなぎ替え・<kbd>Delete</kbd> で削除`
     : S.selEdge
-    ? `両端の丸をドラッグしてつなぎ替え・ダブルクリックで条件を編集・<kbd>Delete</kbd> で削除`
+    ? `<b>＋</b> で間にステップを入れる・両端の丸をドラッグしてつなぎ替え・ダブルクリックで条件を編集・<kbd>Delete</kbd> で削除`
     : S.selected
-    ? `<b>＋</b> で次のステップを追加（ドラッグで別のステップとつなぐ）・<kbd>Enter</kbd> で文言を編集・<kbd>Delete</kbd> で削除`
+    ? `<b>＋</b> で種類を選んで次のステップを追加（ドラッグで別のステップとつなぐ）・<kbd>Enter</kbd> で文言を編集・<kbd>Delete</kbd> で削除`
     : `クリックで選択・ダブルクリックで文言を編集・ドラッグで移動`;
 }
 // 選択したステップが画面の外なら、見える位置までスクロールする（左のレーン名の列は避ける）
@@ -757,7 +778,9 @@ onPanels("change", ev => {
   const t = ev.target; if (!S.flow) return;
   if (t.dataset.laneId != null){ renameLane(+t.dataset.laneId, t); return; }
   const s = curStep(); if (!s) return;
-  if (t.dataset.sf === "type" || t.dataset.sf === "lane"){ s[t.dataset.sf] = t.value; if (!colorable(s)) delete s.color; commit({ form: true }); }
+  // 流れの途中のステップを帳票・データに変えたら、前後の流れをつなぎ直す（toArtifact）
+  if (t.dataset.sf === "type"){ if (toArtifact(S.flow, s.id, t.value)) toast("前後のステップを矢印でつなぎ直し、この" + TYPES[t.value] + "は前のステップと関連（点線）で結びました"); if (!colorable(s)) delete s.color; commit({ form: true }); }
+  else if (t.dataset.sf === "lane"){ s.lane = t.value; commit({ form: true }); }
   else if (t.dataset.nf === "to"){ const e = s.next[+t.dataset.nx]; e.to = t.value; delete e.entry; if (!t.value) s.next.splice(+t.dataset.nx, 1); commit({ form: true }); }
   else if (t.dataset.rx != null){
     const rel = s.related ||= [], v = t.value;
@@ -874,6 +897,7 @@ $("#canvas").addEventListener("click", ev => {
   const co = ev.target.closest("[data-co]"); if (co){ if (co.dataset.co !== S.selected) select(co.dataset.co); else if (S.tab !== "edit") showTab("edit"); return; }
   const n = ev.target.closest("[data-new]"); if (n){ startNew(n.dataset.new); return; }
   const fo = ev.target.closest("[data-folder]"); if (fo){ folderAction(fo.dataset.folder); return; }
+  if (ev.target.closest("[data-eplus]")){ plusEdge(); return; }
   const e = ev.target.closest("[data-edge]"); if (e){ selectEdge(refOf(e.dataset.edge, e.dataset.k)); return; }
   if (ev.target.closest("[data-handle],[data-end]")) return;
   deselect();
@@ -881,6 +905,7 @@ $("#canvas").addEventListener("click", ev => {
 $("#canvas").addEventListener("keydown", ev => {
   if (ev.key !== "Enter" && ev.key !== " ") return;
   const h = ev.target.closest("[data-handle]"); if (h){ ev.preventDefault(); ev.stopPropagation(); plus(h.dataset.handle); return; }
+  if (ev.target.closest("[data-eplus]")){ ev.preventDefault(); ev.stopPropagation(); plusEdge(); return; }
   const g = ev.target.closest("[data-step]"); if (!g) return;
   ev.preventDefault(); ev.stopPropagation();
   if (ev.key === "Enter" && g.dataset.step === S.selected) editStepInline(S.selected); else select(g.dataset.step);
@@ -1045,7 +1070,7 @@ $("#canvas").addEventListener("wheel", ev => {
 // 空いているところをドラッグして図を動かす
 let pan = null, panMoved = false;
 $("#canvas").addEventListener("pointerdown", ev => {
-  if (ev.button !== 0 || ev.target.closest("[data-step],[data-handle],[data-end],[data-new],button")) return;
+  if (ev.button !== 0 || ev.target.closest("[data-step],[data-handle],[data-eplus],[data-end],[data-new],button")) return;
   const c = $("#canvas"); pan = { x: ev.clientX, y: ev.clientY, l: c.scrollLeft, t: c.scrollTop, id: ev.pointerId }; panMoved = false;
 });
 $("#canvas").addEventListener("pointermove", ev => {
@@ -1130,8 +1155,8 @@ function inlineEdit(anchor, value, opts, done){
   document.body.appendChild(el); el.focus(); el.select();
   inlineEd = { el, finish, place };
 }
-$("#canvas").addEventListener("scroll", () => { if (inlineEd && !inlineEd.place()) inlineEd.finish(true); });
-window.addEventListener("resize", () => { if (inlineEd && !inlineEd.place()) inlineEd.finish(true); });
+$("#canvas").addEventListener("scroll", () => { if (inlineEd && !inlineEd.place()) inlineEd.finish(true); if (typeMn && !typeMn.place()) typeMn.close(); });
+window.addEventListener("resize", () => { if (inlineEd && !inlineEd.place()) inlineEd.finish(true); if (typeMn && !typeMn.place()) typeMn.close(); });
 
 function editStepInline(id){
   const s0 = S.flow && S.flow.steps.find(x => x.id === id); if (!s0) return;
@@ -1154,37 +1179,104 @@ function editEdgeInline(sid, k, pt){
     v => { const e = S.flow.steps.find(x => x.id === sid)?.next[k]; if (e){ e.when = v; commit({ form: true }); } });
 }
 function scrollCard(id){ const el = document.querySelector(`[data-stepcard="${CSS.escape(id)}"]`); el && el.scrollIntoView({ block: "nearest" }); }
-/* 次のステップを作ってつなぐ。判断・まだ次がないステップ・branch 指定のときは分岐を足し、
-   それ以外は今の次のステップとの間に挟む（フォームの「この後にステップを挿入」と同じ）。sl（slotAt の形）を渡すとその段に置く。
-   rel なら、流れではなく関連（点線）で結んだ帳票を作る。srcId が帳票・データなら、それを関連で結んだ（それを使う）作業を作る */
-function addNext(srcId, laneId, branch, sl, rel){
+const blankStep = (id, type, lane) => ({ id, type, lane, label: "", note: "", issue: "", tool: "", related: [], next: [] });
+/* 種類 type の次のステップを作り、srcId からつなぐ。今の次のステップはそのまま残し、枝を 1 本足す（間に入れるのは矢印の＋の insertOnEdge）。
+   帳票・データなら、流れではなく関連（点線）で結ぶ（srcId が帳票・データなら、それを使う作業を関連で結ぶ）。sl（slotAt の形）を渡すとその段に置く */
+function addNext(srcId, laneId, type, sl){
   const s = S.flow.steps.find(x => x.id === srcId); if (!s) return;
-  const id = newStepId(), ns = { id, type: rel ? "document" : "task", lane: laneId, label: "", note: "", issue: "", tool: "", related: [], next: [] };
-  if (rel || isArtifact(s)) (s.related ||= []).push(id);
-  else if (branch || s.type === "decision" || !s.next.length) s.next.push({ to: id, when: "" });
-  else { ns.next = s.next; s.next = [{ to: id, when: "" }]; }
+  const id = newStepId(), ns = blankStep(id, type, laneId);
+  if (isArtifact(ns) || isArtifact(s)) (s.related ||= []).push(id);
+  else s.next.push({ to: id, when: "" });
   S.flow.steps.splice(S.flow.steps.indexOf(s) + 1, 0, ns);
   if (sl) pinSlot(ns, sl.lane, sl, null);
   commit({ form: true, select: id }); scrollCard(id); editStepInline(id);
 }
-/* 前のステップを作って dstId へつなぐ。branch 指定がなければ、dstId へ来ていた矢印（後ろの列から戻ってくる矢印と関連を除く）を
-   新しいステップへ付け替えて間に挟む。rel なら、dstId へ関連（点線）で結んだ帳票を作る（dstId で使う帳票）。
-   dstId が帳票・データなら、そこへ関連で結んだ（それを作る）作業を作る */
-function addPrev(dstId, laneId, branch, sl, rel){
+/* 種類 type の前のステップを作り、dstId へつなぐ。dstId へ来ていた矢印はそのまま残す。
+   帳票・データなら、dstId へ関連（点線）で結ぶ（dstId で使う帳票。dstId が帳票・データなら、それを作る作業） */
+function addPrev(dstId, laneId, type, sl){
   const t = S.flow.steps.find(x => x.id === dstId); if (!t) return;
-  const assoc = rel || isArtifact(t);
-  const id = newStepId(), ns = { id, type: rel ? "document" : "task", lane: laneId, label: "", note: "", issue: "", tool: "", related: assoc ? [dstId] : [], next: assoc ? [] : [{ to: dstId, when: "" }] };
-  if (!branch && !assoc) layout(S.flow).edges.forEach(E => { if (E.t === t && !E.back && !E.assoc) E.e.to = id; });
+  const id = newStepId(), ns = blankStep(id, type, laneId);
+  if (isArtifact(ns) || isArtifact(t)) ns.related.push(dstId); else ns.next.push({ to: dstId, when: "" });
   S.flow.steps.splice(S.flow.steps.indexOf(t), 0, ns);
   if (sl) pinSlot(ns, sl.lane, sl, null);
   commit({ form: true, select: id }); scrollCard(id); editStepInline(id);
 }
-function plus(side){
-  const s = curStep(); if (!s) return;
-  if (side === "L") return addPrev(s.id, s.lane);
-  if (side === "R") return addNext(s.id, s.lane);
+/* 矢印の＋：流れの矢印 ref の間に種類 type のステップを入れる（前→新→後）。担当は矢印の元と同じ。
+   条件・出る辺は前の矢印に、入る辺は新しいステップから出る矢印に残す */
+function insertOnEdge(ref, type){
+  const s = S.flow.steps.find(x => x.id === ref.sid), e = s?.next[ref.k]; if (!e) return;
+  const id = newStepId(), ns = blankStep(id, type, s.lane), ne = { to: e.to, when: "" };
+  if (e.entry){ ne.entry = e.entry; delete e.entry; }
+  ns.next.push(ne); e.to = id;
+  S.flow.steps.splice(S.flow.steps.indexOf(s) + 1, 0, ns);
+  commit({ form: true, select: id }); scrollCard(id); editStepInline(id);
+}
+/* ＋から足せる種類。開始はつなぎ先に、終了は前のステップにならないので出さない。"-" は区切り。
+   帳票・データから足すのは、それを作る・使うステップだけ。矢印の間には帳票・データを入れない（流れに入らないため） */
+const ART_TYPES = ["document", "dataObject", "dataStore"], FLOW_TYPES = ["task", "decision", "subProcess"];
+const plusTypes = (s, side) => isArtifact(s) ? FLOW_TYPES : side === "L" ? ["start", ...FLOW_TYPES, "-", ...ART_TYPES] : [...FLOW_TYPES, "end", "-", ...ART_TYPES];
+// ステップの＋の担当：左右は同じ担当、上・下は 1 つ上・下のレーン
+function plusLane(s, side){
+  if (side === "L" || side === "R") return s.lane;
   const i = S.flow.lanes.findIndex(l => l.id === s.lane), l = i >= 0 && S.flow.lanes[i + (side === "T" ? -1 : 1)];
-  if (l) addNext(s.id, l.id);
+  return l ? l.id : null;
+}
+// ステップの＋を押した：種類を選ぶメニューを出し、選んだ種類のステップを足す
+function plus(side){
+  const s = curStep(), lane = s && plusLane(s, side); if (!lane) return;
+  typeMenu(() => $(`#canvas [data-handle="${side}"]`)?.getBoundingClientRect(), plusTypes(s, side),
+    type => side === "L" ? addPrev(s.id, lane, type) : addNext(s.id, lane, type));
+}
+// 選んだ矢印の＋を押した：種類を選ぶメニューを出し、矢印の間に入れる
+function plusEdge(){
+  const ref = S.selEdge; if (!ref || ref.rel || refTo(ref) == null) return;
+  typeMenu(() => $("#canvas [data-eplus]")?.getBoundingClientRect(), FLOW_TYPES, type => insertOnEdge(ref, type));
+}
+/* 種類を選ぶメニュー（＋から足すステップの種類）。anchor() はメニューを添える位置（画面座標の矩形）を返し、スクロールのたびに置き直す。
+   先頭の項目（作業）にフォーカスを置き、↑↓ で動かし、Enter・クリックで決める。Esc・ほかの所を押すと閉じる */
+let typeMn = null;
+function typeMenu(anchor, types, done){
+  if (typeMn) typeMn.close();
+  if (inlineEd) inlineEd.finish(true);
+  const el = document.createElement("div"), back = document.activeElement, t0 = performance.now();
+  el.className = "type-menu"; el.setAttribute("role", "menu"); el.setAttribute("aria-label", "足すステップの種類");
+  el.innerHTML = types.map(t => t === "-" ? `<hr>` : `<button type="button" role="menuitem" data-type="${t}">${typeIcon(t)}<span>${TYPES[t]}</span></button>`).join("");
+  const place = () => {
+    const r = anchor(); if (!r) return false;
+    const w = el.offsetWidth, h = el.offsetHeight, m = 8;
+    const left = r.right + m + w <= innerWidth ? r.right + m : Math.max(m, r.left - m - w);
+    Object.assign(el.style, { left: left + "px", top: Math.max(m, Math.min(r.top - 6, innerHeight - h - m)) + "px" });
+    return true;
+  };
+  let fin = false;
+  const close = byKey => {
+    if (fin) return; fin = true; typeMn = null; el.remove();
+    document.removeEventListener("pointerdown", outside, true);
+    if (byKey) back?.isConnected ? back.focus({ preventScroll: true }) : focusNode(S.selected);
+  };
+  const outside = ev => { if (!el.contains(ev.target)) close(); };
+  const items = () => [...el.querySelectorAll("button")];
+  const choose = b => { close(); done(b.dataset.type); };
+  el.addEventListener("click", ev => {
+    const b = ev.target.closest("button[data-type]");
+    // ＋を Space で押したときの、離した瞬間に届くクリック（キーからのクリックは detail が 0）は拾わない
+    if (!b || (!ev.detail && performance.now() - t0 < 150)) return;
+    choose(b);
+  });
+  el.addEventListener("keydown", ev => {
+    const bs = items(), i = bs.indexOf(document.activeElement);
+    if (ev.key === "Enter" && i >= 0){ ev.preventDefault(); choose(bs[i]); }
+    else if (ev.key === "ArrowDown" || ev.key === "ArrowUp"){ ev.preventDefault(); bs[(i + (ev.key === "ArrowDown" ? 1 : -1) + bs.length) % bs.length].focus(); }
+    else if (ev.key === "Home" || ev.key === "End"){ ev.preventDefault(); bs[ev.key === "Home" ? 0 : bs.length - 1].focus(); }
+    else if (ev.key === "Escape"){ ev.preventDefault(); ev.stopPropagation(); close(true); }
+    else if (ev.key === "Tab") close();
+  });
+  el.style.visibility = "hidden"; document.body.appendChild(el);
+  if (!place()){ el.remove(); return; }
+  el.style.visibility = "";
+  document.addEventListener("pointerdown", outside, true);
+  items()[0].focus({ preventScroll: true });
+  typeMn = { el, close, place };
 }
 /* 前の列へ戻る矢印は、自動の経路（下や左から回り込む）だとつないだ向きと離れて見えるので、
    2つのステップのいちばん近い辺どうしを出る辺・入る辺に指定する（気に入らなければ端をドラッグしてつなぎ替えられる）。
@@ -1344,9 +1436,15 @@ function endDrag(ev, cancel){
     const tgt = p && targetAt(ev, d.id);
     const prev = d.side === "L", rel = !!p && ev.shiftKey;
     // 前の列へ戻るときは、ドラッグを始めた＋の辺から線を出す（左の＋は選択中のステップの左の辺へ入れる）。
-    // Shift を押しながら離すと関連（点線）で結ぶ（空いた所なら、関連で結んだ帳票を作る）
+    // 空いた所で離すと、種類を選ぶメニューを出してそこに置く。
+    // Shift を押しながら離すと関連（点線）で結ぶ（空いた所なら、メニューを出さずに関連で結んだ帳票を作る）
     if (tgt) prev ? connect(tgt, d.id, { entry: "L" }, rel) : connect(d.id, tgt, { exit: d.side }, rel);
-    else if (lane){ const sl = slotAt(p[1]); prev ? addPrev(d.id, lane.id, true, sl, rel) : addNext(d.id, lane.id, true, sl, rel); }
+    else if (lane){
+      const sl = slotAt(p[1]), s = S.flow.steps.find(x => x.id === d.id), add = type => prev ? addPrev(d.id, lane.id, type, sl) : addNext(d.id, lane.id, type, sl);
+      drawCanvas();
+      if (rel || isArtifact(s)) add(rel && !isArtifact(s) ? "document" : "task");
+      else typeMenu(() => { const c = toClient(...p); return c && { left: c[0], top: c[1], right: c[0], bottom: c[1], width: 0, height: 0 }; }, plusTypes(s, d.side), add);
+    }
     else drawCanvas();
     return;
   }
