@@ -140,6 +140,7 @@ body.resizing{cursor:col-resize;user-select:none}
 .canvas svg .handle:hover circle,.canvas svg .handle:focus-visible circle{fill:var(--sel)}
 .canvas svg .handle:hover path,.canvas svg .handle:focus-visible path{stroke:var(--surface)}
 .canvas svg .handle:focus{outline:none}
+.canvas svg .eplus{cursor:pointer}
 .canvas svg .ehit{fill:none;stroke:transparent;stroke-width:12;pointer-events:stroke;cursor:pointer}
 .canvas svg .ehandle{fill:var(--surface);stroke:var(--sel);stroke-width:2;cursor:move;touch-action:none}
 .canvas svg .ehandle:hover{fill:var(--sel)}
@@ -180,6 +181,11 @@ body.resizing-row{cursor:row-resize;user-select:none}
 .step-tip .tt-sec+.tt-sec{border-top:1px dashed var(--line);padding-top:7px}
 .inline-edit{position:fixed;z-index:30;height:32px;border:2px solid var(--sel);border-radius:6px;background:var(--surface);padding:3px 8px;font-size:13px;box-shadow:var(--shadow);outline:none}
 .inline-edit.cut{border-color:var(--warn)}
+/* ＋から足すステップの種類を選ぶメニュー */
+.type-menu{position:fixed;z-index:30;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:5px;min-width:150px;display:grid;gap:1px}
+.type-menu button{border:0;background:transparent;color:var(--ink);font:inherit;font-size:13px;text-align:left;padding:5px 10px 5px 7px;border-radius:6px;display:flex;align-items:center;gap:8px;cursor:pointer}
+.type-menu button:hover,.type-menu button:focus{background:var(--accent-soft);outline:none}
+.type-menu hr{border:0;border-top:1px solid var(--line);margin:3px 2px}
 .canvas-hint{flex-basis:100%;margin:0;font-size:11.5px;color:var(--muted);line-height:1.5}
 .canvas-hint kbd{font-family:var(--f-mono);font-size:10.5px;border:1px solid var(--line-strong);border-radius:3px;padding:0 3px;background:var(--surface)}
 
