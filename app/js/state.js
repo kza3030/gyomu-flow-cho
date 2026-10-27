@@ -8,19 +8,17 @@
 "use strict";
 const s = {
   /* 保存先 */
-  store: "pending",     // db＝アーティファクトのDB / folder＝作業フォルダの .yaml ファイル / memory＝このタブのメモリだけ / pending＝決める前
-  db: null,             // store が db のときの接続
+  store: "pending",     // folder＝作業フォルダの .yaml ファイル / memory＝このタブのメモリだけ / pending＝決める前
   dir: null,            // 作業フォルダ
   histDir: null,        // 作業フォルダの中の版の履歴のフォルダ（.flowbook-history）
   lastDir: null,        // 前回開いた作業フォルダ（IndexedDB に覚えておいたもの）
-  records: new Map(),   // フローの一覧：ID（folder ではファイル名） -> { name, owner, yaml, updatedAt, steps, history }
+  records: new Map(),   // フローの一覧：ID（folder ではファイル名） -> { name, yaml, updatedAt, history }
   fileMeta: new Map(),  // ファイル名 -> { mod: 最後に読み書きしたときの更新日時, hist: 書き出した履歴の印 }
   unexported: new Set(),// memory：ファイルに保存していない変更があるフロー
   pendingCreate: null,  // 作ったばかりで、まだ保存し終えていないフロー（一覧の読み直しで消さない）
   firstRecords: true,   // 次に一覧を読み込んだら、最初のフローを開く
   conflictId: null,     // ほかのアプリでファイルが変わったため、保存を止めているフロー
   broken: false,        // 開いたフローの YAML が読み取れない（直すまで保存しない）
-  legacy: null,         // 以前のバージョンが localStorage に保存したフロー（移行するまで残す）
   scanning: false,      // 画面に戻ったときの作業フォルダの読み直しの最中
   /* 開いているフロー */
   currentId: null,
@@ -49,7 +47,6 @@ const state = Object.freeze(Object.defineProperties({}, Object.fromEntries(Objec
 
 /* フィールドを差し替える */
 const setStore = v => { s.store = v; };
-const setDb = v => { s.db = v; };
 const setDir = v => { s.dir = v; };
 const setHistDir = v => { s.histDir = v; };
 const setLastDir = v => { s.lastDir = v; };
@@ -57,7 +54,6 @@ const setPendingCreate = v => { s.pendingCreate = v; };
 const setFirstRecords = v => { s.firstRecords = v; };
 const setConflictId = v => { s.conflictId = v; };
 const setBroken = v => { s.broken = v; };
-const setLegacy = v => { s.legacy = v; };
 const setScanning = v => { s.scanning = v; };
 const setCurrentId = v => { s.currentId = v; };
 const setFlow = v => { s.flow = v; };
@@ -75,7 +71,7 @@ const setLastL = v => { s.lastL = v; };
 const setShowIssues = v => { s.showIssues = v; };
 const setShowInfo = v => { s.showInfo = v; };
 
-/* フローの一覧（records）。ここで変えるのはメモリの上だけ。ファイルや DB から消すのは app.js の removeRecord */
+/* フローの一覧（records）。ここで変えるのはメモリの上だけ。ファイルから消すのは app.js の removeRecord */
 const setRecord = (id, rec) => { s.records.set(id, rec); };
 const forgetRecord = id => { s.records.delete(id); };
 const clearRecords = () => { s.records.clear(); };
@@ -87,8 +83,6 @@ const clearFileMeta = () => { s.fileMeta.clear(); };
 const markUnexported = id => { s.unexported.add(id); };
 const markExported = id => { s.unexported.delete(id); };
 const clearUnexported = () => { s.unexported.clear(); };
-/* 以前のバージョンのデータ（legacy）から 1 件を除く */
-const forgetLegacy = k => { delete s.legacy[k]; };
 
 /* 元に戻す。文字入力（kind が op 以外）は、同じ種類の 1.5 秒以内の続きをまとめて 1 回分にする */
 function pushUndo(kind){
@@ -108,10 +102,10 @@ function takeUndo(redo){
 
 Object.assign(globalThis.Flowbook ??= {}, {
   state,
-  setStore, setDb, setDir, setHistDir, setLastDir, setPendingCreate, setFirstRecords, setConflictId, setBroken, setLegacy, setScanning,
+  setStore, setDir, setHistDir, setLastDir, setPendingCreate, setFirstRecords, setConflictId, setBroken, setScanning,
   setCurrentId, setFlow, setYamlSrc, setIssues, setSelected, setSelEdge,
   setDirty, setSaving, setAgain, setSaveTimer, setZoom, setTab, setLastL, setShowIssues, setShowInfo,
-  setRecord, forgetRecord, clearRecords, setFileMeta, forgetFileMeta, clearFileMeta, markUnexported, markExported, clearUnexported, forgetLegacy,
+  setRecord, forgetRecord, clearRecords, setFileMeta, forgetFileMeta, clearFileMeta, markUnexported, markExported, clearUnexported,
   pushUndo, resetUndo, takeUndo
 });
 })();

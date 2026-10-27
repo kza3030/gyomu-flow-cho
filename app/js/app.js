@@ -4,23 +4,21 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const {
   TEMPLATES,
-  TYPES, TOOL_NAME, hasTool, COLORS, colorable, SIDES, SIDE_NAME, sideIn, sideOut, normNext, isArtifact, artifactLinks, normalize, toPlain, toYaml, parseYaml, uid,
+  TYPES, TOOL_NAME, hasTool, COLORS, colorable, SIDES, sideIn, sideOut, normNext, isArtifact, artifactLinks, normalize, toYaml, parseYaml, uid,
   validate,
   G, LB, CO, DB_RY, textW, edgeLabel, labelCut, linkedIds, layout, calloutPlan, topY, portAt, placeLabel, wrapText, wrapLabel
 } = Flowbook; // js/core/ の各ファイルで定義
 // 共有の状態（js/state.js）。読むのは S.〇〇、変えるのは下の関数だけ（S.〇〇 = … はエラーになる）
 const {
   state: S,
-  setStore, setDb, setDir, setHistDir, setLastDir, setPendingCreate, setFirstRecords, setConflictId, setBroken, setLegacy, setScanning,
+  setStore, setDir, setHistDir, setLastDir, setPendingCreate, setFirstRecords, setConflictId, setBroken, setScanning,
   setCurrentId, setFlow, setYamlSrc, setIssues, setSelected, setSelEdge,
   setDirty, setSaving, setAgain, setSaveTimer, setZoom, setTab, setLastL, setShowIssues, setShowInfo,
-  setRecord, forgetRecord, clearRecords, setFileMeta, forgetFileMeta, clearFileMeta, markUnexported, markExported, clearUnexported, forgetLegacy,
+  setRecord, forgetRecord, clearRecords, setFileMeta, forgetFileMeta, clearFileMeta, markUnexported, markExported, clearUnexported,
   pushUndo, resetUndo, takeUndo
 } = Flowbook;
-const LS_KEY = "flowbook.flows.v1", LS_CUR = "flowbook.current";
 const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
-const lsDel = k => { try { localStorage.removeItem(k); } catch {} };
 // 作業フォルダの参照（中身は含まない）だけを IndexedDB に置く。使えない環境では何もしない
 function idb(mode, fn){
   return new Promise(res => {
@@ -110,7 +108,7 @@ const ASSOC_DASH = 'stroke-dasharray="2 3"';
 /* 図の本体（レーンの帯・矢印・ステップ・条件ラベル・課題の吹き出し）。座標は配置 L のまま（帯は x = 0〜W に描く）。
    o.ui = { selected, selEdge, issueBy } なら画面用：選択と強調・矢印の当たり判定・チェックの丸・補足と課題のしるし・
    全文の吹き出し・＋ハンドルを足す。o.ui がなければ画像用：操作のための部品は出さず、CSS のクラスで付けている色は属性で書く。
-   o.ids でステップ ID を出す。o.edgeFilter(E) が false の矢印は描かない */
+   o.edgeFilter(E) が false の矢印は描かない */
 function diagramBodySvg(f, L, W, H, o){
   const ui = o.ui, coBy = new Map(L.callouts.map(c => [c.id, c]));
   const marker = (id, c, o = 1) => `<marker id="${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 1 9 5 0 9z" fill="var(${c})" fill-opacity="${o}"/></marker>`;
@@ -154,7 +152,7 @@ function diagramBodySvg(f, L, W, H, o){
     const ty = p.y + p.h / 2 - (lines.length - 1) * 8 - (st.type === "document" ? (sub ? 7 : 3) : 0) - (sp ? 6 : 0) + (st.type === "dataStore" ? 4 : 0) - (sub ? 7 : 0);
     if (sub) s += `<text class="sub" x="${p.x + p.w / 2}" y="${ty + (lines.length - 1) * 16 + 15}" text-anchor="middle" dominant-baseline="middle" font-size="10" fill="var(--muted)">${esc(wrapLabel(sub, 12, 1)[0])}</text>`;
     lines.forEach((t, k) => { s += `<text x="${p.x + p.w / 2}" y="${ty + k * 16}" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="500" fill="${onDark ? (st.type === "start" ? "var(--accent-ink)" : "var(--paper)") : (st.label ? "var(--ink)" : "var(--muted)")}">${esc(t)}</text>`; });
-    if (ui || o.ids) s += `<text x="${p.x + 2}" y="${p.y - 4 - (st.type === "decision" ? 6 : 0)}" font-size="10" font-family="${ui ? "IBM Plex Mono, monospace" : MONO_EXPORT}" fill="var(--muted)">${esc(st.id)}</text>`;
+    if (ui) s += `<text x="${p.x + 2}" y="${p.y - 4 - (st.type === "decision" ? 6 : 0)}" font-size="10" font-family="IBM Plex Mono, monospace" fill="var(--muted)">${esc(st.id)}</text>`;
     if (ui){
       // 右上のしるし：課題（赤い角丸の四角に「!」）を一番右に、補足（メモ）はその左に並べる。
       // 課題を吹き出しで出している間は、しるしが二重にならないよう課題のしるしは出さない（補足を右端へ詰める）
@@ -238,7 +236,6 @@ function setStatus(kind, text){
   if (kind === "saved" && !text && mem && S.unexported.has(S.currentId)) kind = "dirty";
   const map = { loading: "読み込み中", dirty: mem ? "未保存（このタブのみ）" : "未保存の変更", saving: "保存中…", saved: mem ? "ファイルに保存済み" : "保存済み", error: "保存できませんでした" };
   el.className = "pill " + kind; el.textContent = text || map[kind] || "";
-  el.title = mem ? "このブラウザにはフローを保存しません。「エクスポート」→ YAML ファイルとして保存してください（Ctrl+S でも保存できます）" : "";
 }
 let toastT = 0;
 // 開いているダイアログ（画像として出力など）は画面の一番上に重なるので、そのときはトーストをダイアログの中に出す
@@ -248,17 +245,14 @@ function fmtTime(ms){ if (!ms) return ""; const d = new Date(ms); const p = n =>
 function newDocId(){ return "f" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
 /* ---------- persistence ---------- */
-// 保存先（store）：db＝アーティファクトのDB / folder＝作業フォルダの .yaml ファイル / memory＝このタブのメモリだけ
+// 保存先（store）：folder＝作業フォルダの .yaml ファイル / memory＝このタブのメモリだけ
 // ブラウザ内（localStorage・IndexedDB）にはフローの中身を置かない。置くのはパネルの幅と、作業フォルダの参照だけ
 const HIST_DIR = ".flowbook-history"; // 版の履歴：1フロー1ファイル（最大20版）
 const histMark = h => (h || []).length + ":" + ((h || [])[0]?.at || 0);
 
-function readLegacy(){
-  try { const o = JSON.parse(lsGet(LS_KEY) || "null"); return o && typeof o === "object" && Object.keys(o).length ? o : null; } catch { return null; }
-}
 function recordOf(name, text, at, history){
   let f = null; try { f = parseYaml(text); } catch {}
-  return { name: f ? f.name : name.replace(/\.ya?ml$/i, ""), owner: f?.owner || "", yaml: text, updatedAt: at, steps: f ? f.steps.length : 0, history: history || [] };
+  return { name: f ? f.name : name.replace(/\.ya?ml$/i, ""), yaml: text, updatedAt: at, history: history || [] };
 }
 async function readHist(name){
   if (!S.histDir) return [];
@@ -305,7 +299,6 @@ async function persistFile(id, rec, force){
   setFileMeta(id, { mod: (await h.getFile()).lastModified, hist });
 }
 async function removeRecord(id){
-  if (S.store === "db") return S.db.collection("flows").doc(id).delete();
   markExported(id);
   if (S.store !== "folder") return;
   forgetFileMeta(id);
@@ -366,8 +359,6 @@ async function openDir(h){
 }
 function startMemory(){
   setStore("memory"); setDir(null);
-  // 以前のデータは、このタブで見られるようにしたうえで、ファイルに保存してから消してもらう
-  if (S.legacy) Object.entries(S.legacy).forEach(([k, v]) => { if (v && typeof v.yaml === "string"){ setRecord(k, { ...v, history: Array.isArray(v.history) ? v.history : [] }); markUnexported(k); } });
   updateStoreUi();
   setFirstRecords(true); onRecords();
 }
@@ -377,7 +368,7 @@ function updateStoreUi(){
   if (S.dir) $("#folderName").textContent = S.dir.name;
   note.classList.toggle("warn", S.store === "memory");
   if (S.store === "folder") note.textContent = S.dir ? `フローは作業フォルダ「${S.dir.name}」に .yaml ファイルとして保存します。` : "作業フォルダを開くと、フローをそのフォルダに保存します。";
-  else if (S.store === "memory") note.textContent = "このブラウザにはフローを保存しません。タブを閉じると消えるので、「エクスポート」→ YAML ファイルとして保存してください（Ctrl+S でも保存できます）。保存したファイルは「インポート」で開けます。";
+  else if (S.store === "memory") note.textContent = "タブを閉じると消えます。「エクスポート」で YAML ファイルに保存してください（Ctrl+S）。";
   renderNotice();
 }
 function renderNotice(){
@@ -386,40 +377,7 @@ function renderNotice(){
     el.innerHTML = `<span>このフローのファイル「${esc(S.currentId)}」が、ほかのアプリなどで変更されています。保存を止めています。</span><button class="btn sm primary" data-note="reload">ファイルの内容を読み込む</button><button class="btn sm danger" data-note="overwrite">この画面の内容で上書き</button>`;
     el.hidden = false; return;
   }
-  if (S.legacy && (S.store === "memory" || (S.store === "folder" && S.dir))){
-    const n = Object.keys(S.legacy).length;
-    el.innerHTML = S.store === "folder"
-      ? `<span>以前のバージョンでブラウザ内に保存したフローが ${n} 件あります。作業フォルダへ移すと、ブラウザ内からは削除します。</span><button class="btn sm primary" data-note="migrate">作業フォルダへ移す</button><button class="btn sm danger" data-note="discard">移さずに削除</button>`
-      : `<span>以前のバージョンでブラウザ内に保存したフローが ${n} 件あります（一覧に出しています）。YAML ファイルに保存してから、ブラウザ内から削除してください。</span><button class="btn sm" data-note="save-all">すべて YAML で保存</button><button class="btn sm danger" data-note="discard">ブラウザ内から削除</button>`;
-    el.hidden = false; return;
-  }
   el.hidden = true; el.innerHTML = "";
-}
-async function migrateLegacy(){
-  let ok = 0, ng = 0;
-  for (const [k, r] of Object.entries(S.legacy)){
-    if (!r || typeof r.yaml !== "string"){ forgetLegacy(k); continue; }
-    try {
-      const id = await freeName(r.name), history = Array.isArray(r.history) ? r.history.slice(0, 20) : [];
-      const rec = recordOf(id, r.yaml, r.updatedAt || Date.now(), history);
-      setPendingCreate(id); await persistFile(id, rec); setRecord(id, rec);
-      forgetLegacy(k); ok++;
-    } catch { ng++; }
-  }
-  setPendingCreate(null);
-  if (Object.keys(S.legacy).length){ lsSet(LS_KEY, JSON.stringify(S.legacy)); toast(`${ng} 件を書き出せませんでした。ブラウザ内のデータは残しています`); }
-  else { lsDel(LS_KEY); setLegacy(null); toast(`${ok} 件を作業フォルダへ移し、ブラウザ内から削除しました`); }
-  renderNotice(); onRecords();
-}
-async function saveAllLegacy(){
-  for (const k of Object.keys(S.legacy)){
-    const r = S.records.get(k); if (!r) continue;
-    downloadFile(safeName(r.name) + ".yaml", r.yaml.replace(/\n?$/, "\n"));
-    markExported(k);
-    await new Promise(res => setTimeout(res, 400));
-  }
-  setStatus(S.dirty ? "dirty" : "saved");
-  toast("ダウンロードしました。保存できたことを確かめてから、ブラウザ内から削除してください");
 }
 $("#notice").addEventListener("click", async ev => {
   const b = ev.target.closest("[data-note]"); if (!b) return;
@@ -432,42 +390,21 @@ $("#notice").addEventListener("click", async ev => {
       toast("ファイルの内容を読み込みました"); return;
     }
     case "overwrite": setConflictId(null); renderNotice(); await saveNow(true); return;
-    case "migrate": migrateLegacy(); return;
-    case "save-all": saveAllLegacy(); return;
-    case "discard":
-      b.dataset.orig = b.textContent; if (!arm(b, "legacy", "もう一度押すと削除")) return;
-      lsDel(LS_KEY); setLegacy(null); renderNotice(); toast("ブラウザ内に残っていた以前のデータを削除しました"); return;
   }
 });
 function gateHtml(){
   const btns = S.lastDir
     ? `<button class="btn primary" data-folder="reopen">前回のフォルダ「${esc(S.lastDir.name)}」を開く</button><button class="btn" data-folder="pick">別のフォルダを選ぶ</button>`
     : `<button class="btn primary" data-folder="pick">作業フォルダを選ぶ</button>`;
-  const old = S.legacy ? `<p>以前のバージョンでブラウザ内に保存したフローが ${Object.keys(S.legacy).length} 件あります。作業フォルダを開くと、そこへ移せます。</p>` : "";
-  return `<div class="empty"><h2>作業フォルダを開きましょう</h2><p>フローは、選んだフォルダに 1 フローずつ YAML ファイル（.yaml）として保存します。ブラウザ内にはフローの中身を保存しません。共有フォルダや Git で管理しているフォルダも選べます。</p>${old}<div class="row">${btns}</div><div class="row"><button class="btn ghost sm" data-folder="memory">フォルダを使わずに試す（タブを閉じると消えます）</button></div></div>`;
+  return `<div class="empty"><h2>作業フォルダを開きましょう</h2><p>フローは、選んだフォルダに 1 フローずつ .yaml ファイルとして保存します（共有フォルダや Git のフォルダも選べます）。</p><div class="row">${btns}</div><div class="row"><button class="btn ghost sm" data-folder="memory">フォルダを使わずに試す（タブを閉じると消えます）</button></div></div>`;
 }
 function folderAction(kind){
   if (kind === "reopen") reopenFolder();
   else if (kind === "pick") chooseFolder();
-  else if (kind === "memory"){ startMemory(); toast("フォルダを使わずに開きました。残したいフローは「エクスポート」で保存してください"); }
+  else if (kind === "memory") startMemory();
 }
 
 async function initStore(){
-  let d = null;
-  try { d = window.claude && typeof window.claude.use === "function" ? await window.claude.use("db") : null; } catch { d = null; }
-  lsDel(LS_CUR);
-  if (d){
-    setDb(d); setStore("db");
-    $("#storeNote").textContent = "フローはこのアプリに保存され、共有した相手とも同じ内容を見られます。";
-    S.db.collection("flows").onSnapshot(snap => {
-      const seen = new Set();
-      snap.docs.forEach(doc => { seen.add(doc.id); const v = doc.data(); if (!(S.saving && doc.id === S.currentId)) setRecord(doc.id, v); });
-      [...S.records.keys()].forEach(k => { if (!seen.has(k) && k !== S.pendingCreate) forgetRecord(k); });
-      onRecords();
-    }, () => { setStatus("error", "接続が切れました"); });
-    return;
-  }
-  setLegacy(readLegacy());
   if (typeof window.showDirectoryPicker !== "function"){ startMemory(); return; }
   setStore("folder");
   setLastDir(await idbGet("folder"));
@@ -502,7 +439,7 @@ function buildRecord(id){
     if (!last || (Date.now() - last.at) > 10 * 60 * 1000) history.unshift({ at: prev.updatedAt || Date.now(), name: prev.name, yaml: prev.yaml });
   }
   history = history.slice(0, 20);
-  return { name: S.flow.name, owner: S.flow.owner || "", yaml: S.yamlSrc, updatedAt: Date.now(), steps: S.flow.steps.length, history };
+  return { name: S.flow.name, yaml: S.yamlSrc, updatedAt: Date.now(), history };
 }
 function markDirty(){
   setDirty(true); setStatus("dirty");
@@ -519,15 +456,14 @@ async function saveNow(force){
   const id = S.currentId, rec = buildRecord(id);
   setRecord(id, rec); setDirty(false);
   try {
-    if (S.store === "db") await S.db.collection("flows").doc(id).set(rec);
-    else if (S.store === "folder") await persistFile(id, rec, force === true);
+    if (S.store === "folder") await persistFile(id, rec, force === true);
     else markUnexported(id);
     if (S.pendingCreate === id) setPendingCreate(null);
     setStatus(S.dirty ? "dirty" : "saved");
   } catch (err){
     setDirty(true);
     if (err && err.code === "conflict"){ setConflictId(id); renderNotice(); setStatus("error", "ほかで変更されています"); }
-    else setStatus("error", err && err.code === "invalid_argument" ? "閲覧のみ（保存できません）" : err && err.code === "quota_exceeded" ? "保存容量の上限です" : "保存できませんでした");
+    else setStatus("error", "保存できませんでした");
   }
   setSaving(false);
   renderList();
@@ -567,7 +503,7 @@ async function create(yamlText, opts = {}){
   if ([...S.records.values()].some(r => r.name === f.name)){ f.name += "（コピー）"; text = toYaml(f); }
   const id = S.store === "folder" ? await freeName(f.name) : newDocId();
   setPendingCreate(id);
-  setRecord(id, { name: f.name, owner: f.owner, yaml: text, updatedAt: Date.now(), steps: f.steps.length, history: [] });
+  setRecord(id, { name: f.name, yaml: text, updatedAt: Date.now(), history: [] });
   open(id);
   setSelected(S.flow.steps[0]?.id || null); refresh(true);
   await saveNow();
@@ -653,13 +589,14 @@ function drawCanvas(){
 }
 function updateHint(){
   const h = $("#canvasHint"); h.hidden = !S.flow;
+  // 選んでいるものに合わせて、主な操作だけを短く出す（細かい操作は README）
   h.innerHTML = S.selEdge?.rel
-    ? `関連（点線）：両端の丸をドラッグしてつなぎ替え・<kbd>Delete</kbd> で関連を削除・<kbd>Esc</kbd> で選択を外す`
+    ? `両端の丸をドラッグしてつなぎ替え・<kbd>Delete</kbd> で削除`
     : S.selEdge
-    ? `両端の丸をドラッグしてつなぎ替え（ステップの辺の近くで離すとその辺から出入り・真ん中で離すと自動に戻す）・ダブルクリックで条件を編集・<kbd>Delete</kbd> で矢印を削除・<kbd>Esc</kbd> で選択を外す`
+    ? `両端の丸をドラッグしてつなぎ替え・ダブルクリックで条件を編集・<kbd>Delete</kbd> で削除`
     : S.selected
-    ? `<b>＋</b> で次のステップ（左は前のステップ）を追加（ドラッグで別のステップとつなぐ。帳票・データとは関連の点線になる。<kbd>Shift</kbd> を押しながらだと関連で結ぶ・空いた所なら帳票を作る）・ドラッグで左右の列・担当を変更（<kbd>Shift</kbd>+矢印キーでも）・<kbd>Enter</kbd> で文言を編集・<kbd>Delete</kbd> で削除・<kbd>Ctrl</kbd>+<kbd>Z</kbd> で元に戻す`
-    : `ステップをクリックで選択・ダブルクリックで文言を編集・矢印をクリックで選択（端をドラッグでつなぎ替え）・矢印や条件をダブルクリックで条件を編集・ステップをドラッグで左右の列・担当を変更`;
+    ? `<b>＋</b> で次のステップを追加（ドラッグで別のステップとつなぐ）・<kbd>Enter</kbd> で文言を編集・<kbd>Delete</kbd> で削除`
+    : `クリックで選択・ダブルクリックで文言を編集・ドラッグで移動`;
 }
 // 選択したステップが画面の外なら、見える位置までスクロールする（左のレーン名の列は避ける）
 function revealStep(id){
@@ -675,7 +612,7 @@ function renderList(){
   const ul = $("#flowList");
   const ids = sortedIds();
   if (!ids.length){ ul.innerHTML = `<li class="help" style="padding:8px 10px">${S.store === "pending" ? "読み込み中…" : S.store === "folder" && !S.dir ? "作業フォルダを開いていません。" : "まだフローがありません。"}</li>`; return; }
-  ul.innerHTML = ids.map(id => { const r = S.records.get(id); return `<li><button data-open="${esc(id)}" aria-current="${id === S.currentId}"${S.store === "folder" ? ` title="${esc(id)}"` : ""}><span class="fn">${esc(r.name || "無題")}</span><span class="fm">${esc(r.owner ? r.owner + " · " : "")}${r.steps ?? 0} ステップ · ${fmtTime(r.updatedAt)}</span></button></li>`; }).join("");
+  ul.innerHTML = ids.map(id => { const r = S.records.get(id); return `<li><button data-open="${esc(id)}" aria-current="${id === S.currentId}"${S.store === "folder" ? ` title="${esc(id)}"` : ""}><span class="fn">${esc(r.name || "無題")}</span></button></li>`; }).join("");
 }
 
 /* ---------- form editor ---------- */
@@ -711,8 +648,7 @@ function renderForm(){
   // flow：流れのつなぎ先の候補（帳票・データは出さない）
   const stepOpts = (cur, self, flow) => `<option value="">— 選択 —</option>` + S.flow.steps.filter(s => (s.id !== self && !(flow && isArtifact(s))) || s.id === cur).map(s => `<option value="${esc(s.id)}" ${s.id === cur ? "selected" : ""}>${esc(s.id)}：${esc(s.label || "（未記入）")}</option>`).join("") + (cur && !S.flow.steps.some(s => s.id === cur) ? `<option value="${esc(cur)}" selected>${esc(cur)}（存在しません）</option>` : "");
   let g = `<div class="sec"><div class="sec-head"><h3>基本情報</h3></div>
-    <div class="grid2"><div class="field"><label for="fOwner">管理部署</label><input class="inp" id="fOwner" data-meta="owner" value="${esc(S.flow.owner)}" placeholder="例：経理部"></div>
-    <div class="field"><label>ステップ数</label><div class="mono" style="padding:5px 0">${S.flow.steps.length} / 担当 ${S.flow.lanes.length}</div></div></div>
+    <div class="field"><label for="fOwner">管理部署</label><input class="inp" id="fOwner" data-meta="owner" value="${esc(S.flow.owner)}" placeholder="例：経理部"></div>
     <div class="field"><label for="fDesc">説明</label><textarea class="inp" id="fDesc" data-meta="description" rows="2" placeholder="このフローの目的や適用範囲">${esc(S.flow.description)}</textarea></div></div>`;
   g += `<div class="sec"><div class="sec-head"><h3>担当（レーン）</h3><button class="btn sm" data-act="lane-add">＋ 担当を追加</button></div>`;
   S.flow.lanes.forEach((l, i) => {
@@ -720,18 +656,17 @@ function renderForm(){
       <div class="ctrl"><button class="mini" data-act="lane-up" data-i="${i}" ${i ? "" : "disabled"} aria-label="上へ">↑</button><button class="mini" data-act="lane-down" data-i="${i}" ${i < S.flow.lanes.length - 1 ? "" : "disabled"} aria-label="下へ">↓</button><button class="mini" data-act="lane-del" data-i="${i}" aria-label="削除">✕</button></div></div>`;
   });
   if (!S.flow.lanes.length) g += `<p class="help">担当がありません。「＋ 担当を追加」で部署や役割を追加してください。</p>`;
-  g += `<p class="help" style="margin:0">上下の矢印で図のレーンの並び順が変わります。担当名を変えても、ステップとのつながりはそのままです。右の欄は担当IDで、変えるとこの担当に割り振ったステップの担当IDもまとめて置き換わります。</p></div>`;
+  g += `</div>`;
   g += `<div class="sec"><div class="sec-head"><h3>このフローの管理</h3></div><div class="row" style="flex-wrap:wrap">
     <button class="btn sm" data-act="dup">複製</button><button class="btn sm danger" data-act="flow-del">このフローを削除</button></div></div>`;
   $("#tab-setup").innerHTML = g;
-  let h = `<div class="lane-sum"><span class="lbl">担当</span><span class="lane-names">${S.flow.lanes.length ? S.flow.lanes.map(l => `<span class="chip">${esc(l.name)}</span>`).join("") : `<span class="help">未設定</span>`}</span><button class="btn sm ghost" data-act="goto-setup">担当を編集</button></div>`;
-  h += `<div class="sec"><div class="sec-head"><h3>ステップ</h3><button class="btn sm" data-act="step-add">＋ ステップを追加</button></div>
-    <div class="step-tools"><span class="help">⋮⋮ をドラッグして並べ替え</span><button class="btn sm ghost" data-act="sort-flow" title="図の左から右、上から下の順に並べ替えます">図の順に並べる</button><button class="btn sm ghost" data-act="renumber" title="今の並び順でIDを 1 から振り直します。つながりも自動で書き換えます">IDを振り直す</button></div>`;
-  S.flow.steps.forEach((s, i) => {
+  let h = `<div class="sec"><div class="sec-head"><h3>ステップ</h3><button class="btn sm" data-act="step-add">＋ ステップを追加</button></div>
+    <div class="step-tools"><button class="btn sm ghost" data-act="sort-flow" title="図の左から右、上から下の順に並べ替えます">図の順に並べる</button><button class="btn sm ghost" data-act="renumber" title="今の並び順でIDを 1 から振り直します。つながりも自動で書き換えます">IDを振り直す</button></div>`;
+  S.flow.steps.forEach(s => {
     const laneName = S.flow.lanes.find(l => l.id === s.lane)?.name || "担当未設定";
     const isOpen = s.id === S.selected;
     h += `<div class="step ${isOpen ? "open" : ""}" data-stepcard="${esc(s.id)}">
-      <button class="step-sum" data-act="select" data-id="${esc(s.id)}" aria-expanded="${isOpen}" draggable="true"><span class="grip" aria-hidden="true">⋮⋮</span>${typeIcon(s.type, s.color)}<span class="lb"><span class="tag">${esc(s.id)}</span> ${esc(s.label || "（未記入）")} <span data-flag="${esc(s.id)}">${flagOf(s.id)}</span></span><span class="ln">${esc(laneName)}</span></button>`;
+      <button class="step-sum" data-act="select" data-id="${esc(s.id)}" aria-expanded="${isOpen}">${typeIcon(s.type, s.color)}<span class="lb"><span class="tag">${esc(s.id)}</span> ${esc(s.label || "（未記入）")} <span data-flag="${esc(s.id)}">${flagOf(s.id)}</span></span><span class="ln">${esc(laneName)}</span></button>`;
     if (isOpen){
       h += `<div class="step-body">
         <div class="field"><label for="sl-${esc(s.id)}">内容</label><input class="inp" id="sl-${esc(s.id)}" data-sf="label" value="${esc(s.label)}" placeholder="例：申請書を作成"></div>
@@ -746,8 +681,7 @@ function renderForm(){
       // たたんでいても中身がわかるよう、見出しの右に書いてあるものを短く出す
       const peek = [hasTool(s) ? "ツールあり" : "", s.next.length ? `次 ${s.next.length}` : "", rel.length ? `関連 ${rel.length}` : ""].filter(Boolean).join("・") || "なし";
       h += `<details class="info-sec" ${infoOpen ? "open" : ""}><summary>ツール・つながり<span class="peek">${peek}</span></summary>
-        <div class="field"><label for="sx-tool-${esc(s.id)}">${TOOL_NAME}（任意）</label><textarea class="inp info-inp" id="sx-tool-${esc(s.id)}" data-sf="tool" rows="1" placeholder="例：Excel・基幹システム・メール">${esc(s.tool)}</textarea>
-        <p class="help" style="margin:0">図には「ツール・手段を表示」をオンにしたときだけ出します。</p></div>`;
+        <div class="field"><label for="sx-tool-${esc(s.id)}">${TOOL_NAME}（任意）</label><textarea class="inp info-inp" id="sx-tool-${esc(s.id)}" data-sf="tool" rows="1" placeholder="例：Excel・基幹システム・メール">${esc(s.tool)}</textarea></div>`;
       // 帳票・データは流れに入れない（ほかのステップとは関連で結ぶ）ので、次のステップの欄は出さない。流れのつなぎ先にも帳票・データは出さない
       if (!isArtifact(s)){
       h += `<div class="field"><span class="lbl">次のステップ${s.type === "decision" ? "（分岐ごとに条件を書く）" : ""}</span>`;
@@ -762,10 +696,6 @@ function renderForm(){
       rel.forEach((to, k) => { h += `<div class="next-row rel-row"><select class="inp" id="rx-${esc(s.id)}-${k}" data-rx="${k}" aria-label="関連の相手">${stepOpts(to, s.id)}</select><button class="mini" data-act="rel-del" data-k="${k}" aria-label="この関連を削除">✕</button></div>`; });
       h += `<div class="next-row rel-row"><select class="inp" id="rx-${esc(s.id)}-new" data-rx="new" aria-label="関連を追加"><option value="">＋ 関連を追加…</option>${free.map(x => `<option value="${esc(x.id)}">${esc(x.id)}：${esc(x.label || "（未記入）")}</option>`).join("")}</select><span></span></div></div></details>
         <div class="step-actions">
-          <button class="btn sm primary" data-act="insert-after">この後にステップを挿入</button>
-          ${s.type === "decision" ? `<button class="btn sm" data-act="branch-add">分岐先を新規作成</button>` : ""}
-          <button class="btn sm" data-act="step-up" ${i ? "" : "disabled"}>↑</button>
-          <button class="btn sm" data-act="step-down" ${i < S.flow.steps.length - 1 ? "" : "disabled"}>↓</button>
           <button class="btn sm danger" data-act="step-del">削除</button>
         </div></div>`;
     }
@@ -784,32 +714,6 @@ function updateFlags(){
   });
 }
 const curStep = () => S.flow.steps.find(s => s.id === S.selected);
-let dragId = null;
-$("#tab-edit").addEventListener("dragstart", ev => {
-  const b = ev.target.closest(".step-sum"); if (!b) return;
-  dragId = b.dataset.id; ev.dataTransfer.effectAllowed = "move";
-  try { ev.dataTransfer.setData("text/plain", dragId); } catch {}
-  b.closest(".step").classList.add("dragging");
-});
-const clearDrop = () => document.querySelectorAll(".drop-before,.drop-after").forEach(el => el.classList.remove("drop-before", "drop-after"));
-$("#tab-edit").addEventListener("dragover", ev => {
-  const card = ev.target.closest("[data-stepcard]"); if (!dragId || !card) return;
-  ev.preventDefault(); clearDrop();
-  if (card.dataset.stepcard === dragId) return;
-  const r = card.getBoundingClientRect();
-  card.classList.add(ev.clientY < r.top + Math.min(r.height, 40) / 2 ? "drop-before" : "drop-after");
-});
-$("#tab-edit").addEventListener("drop", ev => {
-  const card = ev.target.closest("[data-stepcard]"); if (!dragId || !card) return;
-  ev.preventDefault();
-  const after = card.classList.contains("drop-after"), target = card.dataset.stepcard;
-  clearDrop();
-  if (target === dragId){ dragId = null; return; }
-  const from = S.flow.steps.findIndex(x => x.id === dragId); const [m] = S.flow.steps.splice(from, 1);
-  let to = S.flow.steps.findIndex(x => x.id === target); if (after) to++;
-  S.flow.steps.splice(to, 0, m); dragId = null; commit({ form: true });
-});
-$("#tab-edit").addEventListener("dragend", () => { dragId = null; clearDrop(); document.querySelectorAll(".dragging").forEach(el => el.classList.remove("dragging")); });
 
 function select(id, scroll){
   setSelected(id); setSelEdge(null); renderForm(); drawCanvas(); revealStep(id);
@@ -887,9 +791,7 @@ function arm(btn, key, label){
 onPanels("click", ev => {
   const b = ev.target.closest("[data-act]"); if (!b || !S.flow) return;
   const act = b.dataset.act, s = curStep(), i = +b.dataset.i;
-  const idx = s ? S.flow.steps.indexOf(s) : -1;
   switch (act){
-    case "goto-setup": showTab("setup"); return;
     case "select": select(S.selected === b.dataset.id ? null : b.dataset.id, false); return;
     case "lane-add": { const id = uid("lane", new Set(S.flow.lanes.map(l => l.id))); S.flow.lanes.push({ id, name: "新しい担当" }); commit({ form: true }); const el = $("#lane-" + CSS.escape(id)); el && (el.focus(), el.select()); return; }
     case "lane-up": [S.flow.lanes[i - 1], S.flow.lanes[i]] = [S.flow.lanes[i], S.flow.lanes[i - 1]]; break;
@@ -904,22 +806,12 @@ onPanels("click", ev => {
       S.flow.steps.push({ id, type: S.flow.steps.length ? "task" : "start", lane: last?.lane || S.flow.lanes[0]?.id || "", label: "", note: "", issue: "", tool: "", related: [], next: [] });
       setSelected(id); commit({ form: true }); focusLabel(); return;
     }
-    case "insert-after": {
-      const id = newStepId(); const ns = { id, type: "task", lane: s.lane, label: "", note: "", issue: "", tool: "", related: [], next: s.type === "decision" ? [] : s.next.slice() };
-      if (s.type === "decision") s.next.push({ to: id, when: "" }); else s.next = [{ to: id, when: "" }];
-      if (s.type === "end"){ s.type = "task"; ns.type = "end"; ns.label = s.label; s.label = ""; ns.next = []; }
-      S.flow.steps.splice(idx + 1, 0, ns); setSelected(id); commit({ form: true }); focusLabel(); return;
-    }
-    case "branch-add": {
-      const id = newStepId(); S.flow.steps.splice(idx + 1, 0, { id, type: "task", lane: s.lane, label: "", note: "", issue: "", tool: "", related: [], next: [] });
-      s.next.push({ to: id, when: "" }); commit({ form: true }); const el = document.querySelector(`#nw-${CSS.escape(s.id)}-${s.next.length - 1}`); el && el.focus(); return;
-    }
     case "sort-flow": {
       const L = layout(S.flow), key = st => { const p = L.pos.get(st.id); return p ? p.c * 1000 + p.r : 1e9; };
       const before = S.flow.steps.map(x => x.id).join();
       S.flow.steps.sort((a, b2) => key(a) - key(b2));
       if (before === S.flow.steps.map(x => x.id).join()){ toast("すでに図の順に並んでいます"); return; }
-      toast("図の順に並べ替えました"); break;
+      break;
     }
     case "renumber": {
       const cnt = {}; S.flow.steps.forEach(x => { const m = x.id.match(/^([A-Za-z_]+)\d+$/); if (m) cnt[m[1]] = (cnt[m[1]] || 0) + 1; });
@@ -933,8 +825,6 @@ onPanels("click", ev => {
       if (S.selected) setSelected(map.get(S.selected) || null);
       toast(`IDを ${pre}1〜${pre}${S.flow.steps.length} に振り直しました（元の版は履歴に残しています）`); break;
     }
-    case "step-up": if (idx > 0) [S.flow.steps[idx - 1], S.flow.steps[idx]] = [S.flow.steps[idx], S.flow.steps[idx - 1]]; break;
-    case "step-down": if (idx < S.flow.steps.length - 1) [S.flow.steps[idx + 1], S.flow.steps[idx]] = [S.flow.steps[idx], S.flow.steps[idx + 1]]; break;
     case "step-del": {
       b.dataset.orig = "削除"; if (!arm(b, "step" + s.id, "もう一度押して削除")) return;
       deleteStep(s.id); commit({ form: true, select: null });
@@ -943,8 +833,8 @@ onPanels("click", ev => {
     case "next-del": s.next.splice(+b.dataset.k, 1); break;
     case "rel-del": s.related?.splice(+b.dataset.k, 1); break;
     case "color": if (b.dataset.color) s.color = b.dataset.color; else delete s.color; break;
-    case "col-auto": delete s.col; delete s.row; toast("図の位置を自動に戻しました"); break;
-    case "dup": { const f = JSON.parse(JSON.stringify(S.flow)); f.name += "（コピー）"; create(toYaml(f)).then(ok => ok && toast("複製しました")); return; }
+    case "col-auto": delete s.col; delete s.row; break;
+    case "dup": { const f = JSON.parse(JSON.stringify(S.flow)); f.name += "（コピー）"; create(toYaml(f)); return; }
     case "flow-del": {
       b.dataset.orig = "このフローを削除"; if (!arm(b, "flow" + S.currentId, "もう一度押すと完全に削除")) return;
       const id = S.currentId; forgetRecord(id); clearTimeout(S.saveTimer); setDirty(false);
@@ -1116,6 +1006,13 @@ $("#infoBtn").onclick = () => {
   setShowInfo(!S.showInfo); lsSet("flowbook.showInfo", S.showInfo ? "1" : "");
   updateInfoBtn(); drawCanvas();
 };
+// 凡例：ふだんはたたんでおく（開け閉めはこの端末で覚えておく）。画像出力の凡例は、たたんでいても .legend の記号を読む
+function setLegendOpen(on){
+  $("#legend").hidden = !on;
+  const b = $("#legendToggle"); b.setAttribute("aria-expanded", String(on)); b.title = on ? "凡例を閉じる" : "凡例を開く";
+}
+$("#legendToggle").onclick = () => { const on = $("#legend").hidden; setLegendOpen(on); lsSet("flowbook.legendOpen", on ? "1" : ""); };
+setLegendOpen(lsGet("flowbook.legendOpen") === "1");
 // 課題の欄を開いて書き直す（図の吹き出しのダブルクリック）
 function editIssue(id){
   if ($(".body").classList.contains("focus")) $("#focusBtn").click();
@@ -1310,10 +1207,9 @@ function connect(a, b, fix, rel){
   const s = S.flow.steps.find(x => x.id === a), t = S.flow.steps.find(x => x.id === b); if (!s || !t || a === b){ drawCanvas(); return; }
   rel ||= isArtifact(s) || isArtifact(t);
   if (s.next.some(e => e.to === b) || (rel && (s.related?.includes(b) || t.related?.includes(a)))){ toast("すでにつながっています"); drawCanvas(); return; }
-  if (rel){ (s.related ||= []).push(b); commit({ form: true }); toast(`「${s.label || a}」と「${t.label || b}」を関連の点線で結びました`); return; }
+  if (rel){ (s.related ||= []).push(b); commit({ form: true }); return; }
   if (s.related?.includes(b)) s.related = s.related.filter(x => x !== b);
   const used = usedSides(layout(S.flow)), e = { to: b, when: "" }; s.next.push(e); pinNearest(e, used, fix); commit({ form: true });
-  toast(`「${s.label || a}」から「${t.label || b}」へつなぎました`);
   if (s.type === "decision") editEdgeInline(a, s.next.length - 1);
 }
 
@@ -1337,34 +1233,28 @@ function reattachAt(ev, p, d){
 function reattach(ref, end, id, side){
   if (ref.rel) return reattachRel(ref, end, id);
   const s = S.flow.steps.find(x => x.id === ref.sid), e = s?.next[ref.k]; if (!e){ drawCanvas(); return; }
-  const name = x => { const st = S.flow.steps.find(y => y.id === x); return st?.label || x; };
   const pin = (k, v) => { if (v) e[k] = v; else delete e[k]; };
-  const where = side ? `${SIDE_NAME[side]}の辺` : "自動";
   if (end === "t"){
-    if (id === e.to){ if ((e.entry || null) === side){ drawCanvas(); return; } pin("entry", side); commit({ form: true, select: null, edge: ref }); toast(`矢印の入る位置を「${where}」にしました`); return; }
+    if (id === e.to){ if ((e.entry || null) === side){ drawCanvas(); return; } pin("entry", side); commit({ form: true, select: null, edge: ref }); return; }
     if (s.next.some(x => x !== e && x.to === id)){ toast("すでにつながっています"); drawCanvas(); return; }
     e.to = id; pin("entry", side); commit({ form: true, select: null, edge: ref });
-    toast(`つなぎ先を「${name(id)}」に変えました`);
     return;
   }
-  if (id === s.id){ if ((e.exit || null) === side){ drawCanvas(); return; } pin("exit", side); commit({ form: true, select: null, edge: ref }); toast(`矢印の出る位置を「${where}」にしました`); return; }
+  if (id === s.id){ if ((e.exit || null) === side){ drawCanvas(); return; } pin("exit", side); commit({ form: true, select: null, edge: ref }); return; }
   const ns = S.flow.steps.find(x => x.id === id); if (!ns){ drawCanvas(); return; }
   if (ns.next.some(x => x.to === e.to)){ toast("すでにつながっています"); drawCanvas(); return; }
   s.next.splice(ref.k, 1); pin("exit", side); ns.next.push(e);
   commit({ form: true, select: null, edge: { sid: ns.id, k: ns.next.length - 1 } });
-  toast(`「${name(e.to)}」への矢印を「${name(id)}」から出すように変えました`);
 }
 // 関連（点線）のつなぎ替え。end = t なら相手を、s なら関連元を id に変える
 function reattachRel(ref, end, id){
   const s = S.flow.steps.find(x => x.id === ref.sid), to = s?.related?.[ref.k]; if (to == null){ drawCanvas(); return; }
-  const name = x => { const st = S.flow.steps.find(y => y.id === x); return st?.label || x; };
   const [a, b] = end === "t" ? [s.id, id] : [id, to], ns = S.flow.steps.find(x => x.id === a), nt = S.flow.steps.find(x => x.id === b);
   if (!ns || !nt || (a === s.id && b === to)){ drawCanvas(); return; }
   if (ns.next.some(e => e.to === b) || ns.related?.includes(b) || nt.related?.includes(a)){ toast("すでにつながっています"); drawCanvas(); return; }
-  if (end === "t"){ s.related[ref.k] = id; commit({ form: true, select: null, edge: ref }); toast(`関連の相手を「${name(id)}」に変えました`); return; }
+  if (end === "t"){ s.related[ref.k] = id; commit({ form: true, select: null, edge: ref }); return; }
   s.related.splice(ref.k, 1); (ns.related ||= []).push(to);
   commit({ form: true, select: null, edge: { sid: ns.id, k: ns.related.length - 1, rel: true } });
-  toast(`「${name(to)}」との関連を「${name(id)}」から結ぶように変えました`);
 }
 
 /* ドラッグ：＋からは「つなぐ」（ステップの上で離すと接続、空いたところで離すとそこに新しいステップ。左の＋は向きが逆）。
@@ -1497,12 +1387,8 @@ function prunePins(list){
 }
 /* ステップを lane の段 sl・c 列目（0 始まり）へ動かす。自動で決まる位置と同じなら指定（col・row）は外し、違えば残す */
 function moveStep(s, lane, c, sl){
-  const P = S.lastL.pos.get(s.id), laneChg = lane.id !== s.lane, li = S.lastL.lanes.indexOf(lane), tiers0 = S.lastL.rows.filter(w => w.r === li).length;
   pinSlot(s, lane, sl, c);
   commit({ form: true, select: s.id });
-  const Q = layout(S.flow, null, true), P2 = Q.pos.get(s.id), tiers = Q.rows.filter(w => w.r === P2.l).length, multi = tiers > 1;
-  const at = `${P2.c + 1}列目${multi ? `・上から${P2.t + 1}段目` : ""}`;
-  toast(laneChg ? (P2.c !== P.c || multi ? `担当を「${lane.name}」に変更し、${at}に移動しました` : `担当を「${lane.name}」に変更しました`) : tiers > tiers0 ? `新しい段を作り、${at}に移動しました` : `${at}に移動しました`);
 }
 $("#canvas").addEventListener("pointerup", ev => endDrag(ev, false));
 $("#canvas").addEventListener("pointercancel", ev => endDrag(ev, true));
@@ -1609,7 +1495,7 @@ let yamlT = 0;
 function setYamlMsg(err){
   const m = $("#yamlMsg");
   if (err){ m.className = "yaml-msg err"; m.textContent = err; }
-  else { m.className = "yaml-msg"; m.textContent = "正しく読み取れています。編集すると図と保存に反映されます。"; }
+  else { m.className = "yaml-msg"; m.textContent = ""; }
 }
 $("#yamlText").addEventListener("input", () => {
   clearTimeout(yamlT);
@@ -1636,26 +1522,21 @@ $("#yamlText").addEventListener("keydown", e => {
 /* ---------- checks & history ---------- */
 function renderChecks(){
   const el = $("#tab-check"); if (!S.flow) return;
-  if (!S.issues.length){ el.innerHTML = `<div class="ok-box">問題は見つかりませんでした。すべてのステップが開始からたどれ、終了まで行き着きます。</div>`; return; }
+  if (!S.issues.length){ el.innerHTML = `<div class="ok-box">問題は見つかりませんでした。</div>`; return; }
   const lv = { bad: "要修正", warn: "確認", info: "参考" };
-  el.innerHTML = `<p class="help" style="margin-top:0">クリックすると該当するステップを開きます。</p><ul class="issues">` + S.issues.map(i => `<li><button class="issue ${i.level}" ${i.step ? `data-goto="${esc(i.step)}"` : ""}><span class="lv">${lv[i.level]}</span><span>${esc(i.msg)}</span></button></li>`).join("") + `</ul>`;
+  el.innerHTML = `<ul class="issues">` + S.issues.map(i => `<li><button class="issue ${i.level}" ${i.step ? `data-goto="${esc(i.step)}"` : ""}><span class="lv">${lv[i.level]}</span><span>${esc(i.msg)}</span></button></li>`).join("") + `</ul>`;
 }
 $("#tab-check").addEventListener("click", ev => { const b = ev.target.closest("[data-goto]"); if (b) select(b.dataset.goto); });
 function renderHist(){
   const el = $("#tab-hist"); if (!S.currentId) { el.innerHTML = ""; return; }
   const r = S.records.get(S.currentId) || {}, h = r.history || [];
-  let s = `<div class="sec"><div class="sec-head"><h3>版の履歴</h3><button class="btn sm" data-hist="snap">今の版を記録</button></div><p class="help" style="margin:0">10分ごとに以前の版が残ります（最大20版。超えると古い版から消えます）。戻した後も、戻す前の版は履歴に残ります。${S.store === "folder" ? `版は作業フォルダの <code>${HIST_DIR}</code> フォルダに、1フローにつき1ファイルで保存します。` : S.store === "memory" ? "履歴はこのタブを閉じると消えます。" : ""}</p>`;
+  let s = `<div class="sec"><div class="sec-head"><h3>版の履歴</h3></div><p class="help" style="margin:0">10分ごとに以前の版が残ります（最大20版。超えると古い版から消えます）。戻した後も、戻す前の版は履歴に残ります。${S.store === "folder" ? `版は作業フォルダの <code>${HIST_DIR}</code> フォルダに、1フローにつき1ファイルで保存します。` : S.store === "memory" ? "履歴はこのタブを閉じると消えます。" : ""}</p>`;
   s += h.length ? `<ul class="hist">` + h.map((e, k) => { let n = "—"; try { n = parseYaml(e.yaml).steps.length + " ステップ"; } catch {} return `<li><div><div class="t">${fmtTime(e.at)}</div><div class="d">${esc(e.name || "")} · ${n}${e.memo ? " · " + esc(e.memo) : ""}</div></div><button class="btn sm" data-hist="restore" data-k="${k}">この版に戻す</button></li>`; }).join("") + `</ul>` : `<p class="help">まだ以前の版はありません。</p>`;
   el.innerHTML = s + `</div>`;
 }
 $("#tab-hist").addEventListener("click", ev => {
   const b = ev.target.closest("[data-hist]"); if (!b || !S.currentId) return;
   const r = S.records.get(S.currentId); if (!r) return;
-  if (b.dataset.hist === "snap"){
-    const history = (r.history || []).slice(); history.unshift({ at: Date.now(), name: S.flow.name, yaml: S.yamlSrc, memo: "手動で記録" });
-    setRecord(S.currentId, { ...r, history: history.slice(0, 20) });
-    clearTimeout(S.saveTimer); setDirty(true); saveNow().then(renderHist); toast("今の版を履歴に記録しました"); return;
-  }
   const e = (r.history || [])[+b.dataset.k]; if (!e) return;
   b.dataset.orig = "この版に戻す"; if (!arm(b, "hist" + b.dataset.k, "もう一度押して戻す")) return;
   const history = (r.history || []).slice(); history.unshift({ at: Date.now(), name: r.name, yaml: r.yaml, memo: "戻す前の版" });
@@ -1680,7 +1561,7 @@ document.querySelector(".tabs").addEventListener("click", ev => { const b = ev.t
 $("#flowName").addEventListener("input", e => { if (!S.flow) return; S.flow.name = e.target.value; commit(); });
 $("#flowName").addEventListener("change", () => { if (S.flow) renameFile(); });
 $("#flowList").addEventListener("click", ev => { const b = ev.target.closest("[data-open]"); if (b && b.dataset.open !== S.currentId) open(b.dataset.open); });
-async function startNew(kind){ if (await create(TEMPLATES[kind] || TEMPLATES.blank)) toast(kind === "blank" ? "新しいフローを作成しました" : "ひな形からフローを作成しました"); }
+function startNew(kind){ create(TEMPLATES[kind] || TEMPLATES.blank); }
 document.querySelector(".side").addEventListener("click", ev => { const n = ev.target.closest("[data-new]"); if (n) startNew(n.dataset.new); });
 $("#importBtn").onclick = async () => {
   // 作業フォルダを開く前なら、先に選んでもらう（読み込んだフローの保存先になるため）
@@ -1698,16 +1579,9 @@ $("#importFile").addEventListener("change", async ev => {
   }
   if (names.length) toast(names.length === 1 ? `「${names[0]}」を読み込みました` : `${names.length} 件のフローを読み込みました`);
 });
-function closeMenus(){ ["#exportMenu", "#folderMenu"].forEach(s => $(s).hidden = true); $("#exportBtn").setAttribute("aria-expanded", "false"); $("#folderBtn").setAttribute("aria-expanded", "false"); }
-$("#folderBtn").onclick = e => { e.stopPropagation(); const m = $("#folderMenu"), show = m.hidden; closeMenus(); m.hidden = !show; $("#folderBtn").setAttribute("aria-expanded", String(show)); };
-$("#folderMenu").addEventListener("click", async ev => {
-  const b = ev.target.closest("[data-fm]"); if (!b) return;
-  closeMenus();
-  if (b.dataset.fm === "pick"){ chooseFolder(); return; }
-  if (S.dirty) await saveNow();
-  try { await scanDir(); } catch { toast("フォルダを読み込めませんでした"); return; }
-  onRecords(); renderNotice(); toast("フォルダを読み込み直しました");
-});
+function closeMenus(){ $("#exportMenu").hidden = true; $("#exportBtn").setAttribute("aria-expanded", "false"); }
+// 別の作業フォルダに切り替える（今のフォルダへの変更は openDir で保存してから）
+$("#folderBtn").onclick = () => chooseFolder();
 // ほかのアプリ（エディタ・Git など）で変えたファイルを、画面に戻ったときに反映する
 window.addEventListener("focus", async () => {
   if (S.store !== "folder" || !S.dir || S.scanning) return;
@@ -1757,7 +1631,6 @@ async function copyText(text, label){
 const SAVE_TYPES = {
   ".yaml": { description: "YAML ファイル", accept: { "application/x-yaml": [".yaml", ".yml"] } },
   ".md": { description: "Markdown ファイル", accept: { "text/markdown": [".md"] } },
-  ".json": { description: "JSON ファイル", accept: { "application/json": [".json"] } },
   ".png": { description: "PNG 画像", accept: { "image/png": [".png"] } },
 };
 // 保存場所を選ぶダイアログ（Chrome・Edge など）。使えない環境では null を返し、従来のダウンロードに任せる
@@ -1776,18 +1649,12 @@ function downloadFile(filename, data){
   const a = document.createElement("a"); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-let downloads;
 // 保存できたら true を返す（memory で「ファイルに保存済み」にするため）
 async function saveFile(filename, data){
   const picked = await saveWithPicker(filename, data);
   if (picked !== null) return picked;
-  if (downloads === undefined){ try { downloads = window.claude && window.claude.use ? await window.claude.use("downloads") : null; } catch { downloads = null; } }
-  if (!downloads){
-    try { downloadFile(filename, data); toast("保存しました"); return true; }
-    catch { toast("保存できませんでした。コピーをご利用ください"); return false; }
-  }
-  try { await downloads.save({ filename, data }); toast("保存しました"); return true; }
-  catch (e){ if (e && e.code !== "declined") toast("保存できませんでした"); return false; }
+  try { downloadFile(filename, data); toast("保存しました"); return true; }
+  catch { toast("保存できませんでした。コピーをご利用ください"); return false; }
 }
 // 今のフローをファイルに保存する。memory では、保存できたら「ファイルに保存済み」にする
 async function exportFlow(filename, data){
@@ -1807,7 +1674,6 @@ $("#exportMenu").addEventListener("click", ev => {
     case "image": openImgDialog(); break;
     case "save-yaml": exportFlow(safeName(S.flow.name) + ".yaml", S.yamlSrc.replace(/\n?$/, "\n")); break;
     case "save-md": exportFlow(safeName(S.flow.name) + ".md", markdown(S.flow)); break;
-    case "save-json": exportFlow(safeName(S.flow.name) + ".json", JSON.stringify(toPlain(S.flow), null, 2)); break;
   }
 });
 
@@ -1816,10 +1682,10 @@ $("#exportMenu").addEventListener("click", ev => {
    どの枚も左端にレーン名の列を付け、全枚を同じ縮尺・同じ大きさにする。枚をまたぐ矢印は、切れ目の外側の帯に結合子（丸に A・B…）を置いてつなぐ。
    図の単位は「図の px」（画面で 100% のときの 1px）。縮尺 s は 1 図 px が貼ったときに何 pt になるか */
 // 貼る先。w は貼る幅（インチ）、ar は高さ / 幅。fit は分割せず、図全体を比率そのままで 1 枚にする。
-// pack なら各枚に列をぎりぎりまで詰める（本文エリア 16:7 は横長で、幅をそろえると右に余白が出すぎるため）。16:9 は各枚の幅をそろえる
+// 分割するときは、最後の枚より前の各枚に、画像の幅に収まるだけ列を詰める（余りは最後の枚に入る）
 const IMG_SIZES = {
   "16:9": { w: 13.333, ar: 9 / 16 },
-  "16:7": { w: 12.333, ar: 7 / 16, pack: true },
+  "16:7": { w: 12.333, ar: 7 / 16 },
   fit: { w: 0, ar: 0 },
 };
 // px：画像の横のピクセル数（fit 以外）。m：外の余白、th：見出しの高さ、cw：結合子を置く帯の幅、r：結合子の半径、gapMin：結合子どうしの縦の間隔
@@ -1827,7 +1693,6 @@ const IMG = { px: 1920, m: 16, th: 30, cw: 50, r: 9, gapMin: 34, fitPx: 2, maxPx
 // 画像の中ではページの Web フォントを使えないため、端末にあるフォントを並べる（Windows では游ゴシック UI）。
 // 文字の幅を測るときも同じフォントになるよう、Web フォント（IBM Plex Sans JP）は入れない
 const FONT_EXPORT = "'Yu Gothic UI','Meiryo','Hiragino Sans',sans-serif";
-const MONO_EXPORT = "Consolas,Menlo,monospace";
 const NODE_FONT = 12.5; // ステップの文字の大きさ（図 px）。読みやすさの目安にする
 
 // 列のすき間 g（列 g と g+1 の間）で切る位置の候補。条件ラベル・課題の吹き出しを横切らず、縦の線からなるべく離れた x を選ぶ
@@ -1905,7 +1770,7 @@ function paginate(L, o, name){
   return P;
 }
 /* ステップの文字が o.pt になる縮尺を基本に、全レーンと見出し（高さ th）が 1 枚の高さに入らなければ縮める。
-   そのうえで、1 枚の幅に収まる最小の枚数で、各枚の幅がそろい（pack なら最後の枚より前を幅いっぱいまで詰め）切れ目の結合子が少ない切り方を選ぶ。
+   そのうえで、1 枚の幅に収まる最小の枚数で、最後の枚より前を幅いっぱいまで詰め、切れ目の結合子が少ない切り方を選ぶ。
    minW は分割しないときの中身の最小の幅 */
 function pagesAt(L, o, th, minW){
   const H = Math.max(L.height, G.laneH), end = L.width, M = IMG.m;
@@ -1920,9 +1785,9 @@ function pagesAt(L, o, th, minW){
   let s = Math.min(sT, Wpt * Z.ar / (H + 2 * M + th));
   const b = [{ x: G.label, cost: 0 }, ...cutCandidates(L), { x: end, cost: 0 }], last = b.length - 1;
   /* 境目 b[0]〜b[last] を、ちょうど k 枚・各枚の幅 PW 以内に分ける切り方のうち、点数の最も低いもの（分けられなければ null）。
-     点数は、各枚の幅が平均 avg からずれるほど（pack なら最後の枚より前の枚の右の余白が広いほど）、切れ目の点数（結合子の数など）が高いほど高い。
+     点数は、最後の枚より前の枚の右の余白が広いほど、切れ目の点数（結合子の数など）が高いほど高い。
      dp[j] = 境目 j までを n 枚で覆うときの最小の点数と、1 つ前の境目 */
-  const split = (k, PW, avg) => {
+  const split = (k, PW) => {
     let dp = b.map((_, j) => j ? null : { cost: 0, from: null, at: 0 });
     for (let n = 1; n <= k; n++){
       const nx = b.map(() => null);
@@ -1931,7 +1796,7 @@ function pagesAt(L, o, th, minW){
         for (let j = i + 1; j <= last; j++){
           const w = pageW(b, i, j, last); if (w > PW) break;
           if ((n === k) !== (j === last)) continue;
-          const fill = Z.pack ? (j < last ? 1000 * (PW - w) / PW : 0) : 300 * ((w - avg) / avg) ** 2;
+          const fill = j < last ? 1000 * (PW - w) / PW : 0;
           const c = dp[i].cost + fill + (j < last ? b[j].cost : 0);
           if (!nx[j] || c < nx[j].cost) nx[j] = { cost: c, from: dp[i], at: j };
         }
@@ -1944,7 +1809,7 @@ function pagesAt(L, o, th, minW){
   let goal = null;
   for (let tries = 0; tries < 20 && !goal; tries++){
     if (tries) s *= 0.9;
-    for (let k = 1; k <= last && !goal; k++) goal = split(k, Wpt / s, (end - G.label + k * (G.label + 2 * M) + 2 * (k - 1) * IMG.cw) / k);
+    for (let k = 1; k <= last && !goal; k++) goal = split(k, Wpt / s);
   }
   if (!goal) return null;
   const at = []; for (let n = goal; n; n = n.from) at.unshift(n.at);
@@ -2012,7 +1877,7 @@ function pageSvg(f, L, P, links, i, o){
   s += `<g transform="translate(${ox} ${oy})">`;
   // 結合子の帯にもレーンの帯を伸ばしておく（本体は切り出した範囲の上に重なる）
   L.lanes.forEach((l, k) => { const y = L.laneY[k]; s += `<rect x="${xa}" y="${y}" width="${xb - xa}" height="${L.laneY[k + 1] - y}" fill="${k % 2 ? "var(--lane-b)" : "var(--lane-a)"}"/>`; if (k) s += `<line x1="${xa}" x2="${xb}" y1="${y}" y2="${y}" stroke="var(--line-strong)"/>`; });
-  s += `<g clip-path="url(#pg)">${diagramBodySvg(f, { ...L, edges: links.local[i] }, Math.max(L.width, 420), H, { ids: o.ids, info: o.info })}</g>`;
+  s += `<g clip-path="url(#pg)">${diagramBodySvg(f, { ...L, edges: links.local[i] }, Math.max(L.width, 420), H, { info: o.info })}</g>`;
   // 切れ目：前の枚・次の枚へ続くことを破線で示す
   if (cl) s += `<line x1="${p.x0}" x2="${p.x0}" y1="0" y2="${H}" stroke="var(--line-strong)" stroke-dasharray="4 4"/>`;
   if (cr) s += `<line x1="${p.x1}" x2="${p.x1}" y1="0" y2="${H}" stroke="var(--line-strong)" stroke-dasharray="4 4"/>`;
@@ -2078,19 +1943,18 @@ function svgToPng(svg, w, h, dpi){
   });
 }
 
-/* 出力画面。設定（貼る場所・文字の大きさ・見出し・ID）はこの端末で覚えておく。課題の吹き出し・入出力は、開いたときの「課題を表示」「入出力を表示」に合わせる */
+/* 出力画面。設定（貼る場所・文字の大きさ・見出し・凡例）はこの端末で覚えておく。課題の吹き出し・ツール・手段は、開いたときの「課題を表示」「ツール・手段を表示」に合わせる */
 const IMG_KEY = "flowbook.imgExport";
 let imgOpt = null, imgPlan = null, imgUrls = [], imgPngs = [];
 function openImgDialog(){
   let o = {}; try { o = JSON.parse(lsGet(IMG_KEY) || "{}") || {}; } catch {}
   const hasIssue = S.flow.steps.some(s => s.issue && s.issue.trim()), hasIn = S.flow.steps.some(hasTool);
-  imgOpt = { size: IMG_SIZES[o.size] ? o.size : "16:9", pt: [8, 10, 12].includes(o.pt) ? o.pt : 8, title: o.title !== false, legend: !!o.legend, ids: !!o.ids, issues: S.showIssues && hasIssue, info: S.showInfo && hasIn };
+  imgOpt = { size: IMG_SIZES[o.size] ? o.size : "16:9", pt: [8, 10, 12].includes(o.pt) ? o.pt : 8, title: o.title !== false, legend: !!o.legend, issues: S.showIssues && hasIssue, info: S.showInfo && hasIn };
   const d = $("#imgDlg");
   d.querySelectorAll("[name=imgSize]").forEach(r => { r.checked = r.value === imgOpt.size; });
   d.querySelectorAll("[name=imgPt]").forEach(r => { r.checked = +r.value === imgOpt.pt; });
   d.querySelector("[name=imgTitle]").checked = imgOpt.title;
   d.querySelector("[name=imgLegend]").checked = imgOpt.legend;
-  d.querySelector("[name=imgIds]").checked = imgOpt.ids;
   const iss = d.querySelector("[name=imgIssues]"); iss.checked = imgOpt.issues; iss.disabled = !hasIssue;
   iss.closest("label").title = hasIssue ? "" : "課題の書かれたステップがありません";
   const inf = d.querySelector("[name=imgInfo]"); inf.checked = imgOpt.info; inf.disabled = !hasIn;
@@ -2159,11 +2023,10 @@ async function saveImgs(){
     else if (t.name === "imgPt") imgOpt.pt = +t.value;
     else if (t.name === "imgTitle") imgOpt.title = t.checked;
     else if (t.name === "imgLegend") imgOpt.legend = t.checked;
-    else if (t.name === "imgIds") imgOpt.ids = t.checked;
     else if (t.name === "imgIssues") imgOpt.issues = t.checked;
     else if (t.name === "imgInfo") imgOpt.info = t.checked;
     else return;
-    lsSet(IMG_KEY, JSON.stringify({ size: imgOpt.size, pt: imgOpt.pt, title: imgOpt.title, legend: imgOpt.legend, ids: imgOpt.ids }));
+    lsSet(IMG_KEY, JSON.stringify({ size: imgOpt.size, pt: imgOpt.pt, title: imgOpt.title, legend: imgOpt.legend }));
     renderImgDialog();
   });
   d.addEventListener("click", ev => {
@@ -2186,7 +2049,6 @@ document.addEventListener("keydown", e => {
 });
 // ファイルへの書き込みは非同期で、閉じる間際には終わる保証がない。保存しきれていない変更があれば確認する
 window.addEventListener("beforeunload", e => {
-  if (S.store === "db"){ if (S.dirty) saveNow(); return; }
   if (S.store === "folder" && S.dirty) saveNow();
   const risky = S.store === "memory" ? S.unexported.size > 0 || S.dirty : S.dirty || S.saving || !!S.conflictId;
   if (risky){ e.preventDefault(); e.returnValue = ""; }
