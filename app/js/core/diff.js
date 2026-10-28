@@ -4,7 +4,7 @@
    core/ のファイルは画面（DOM）に触らない。Node のテスト（tests/）からも読み込む */
 (() => {
 "use strict";
-const { newFlowId } = globalThis.Flowbook; // model.js
+const { newFlowId, isArtifact, colorable } = globalThis.Flowbook; // model.js
 
 /* 比べる項目。位置（col・row）・色・辺の指定は見た目なので比べない */
 const DIFF_FIELDS = { label: "内容", type: "種類", tool: "ツール", note: "補足", issue: "課題" };
@@ -74,90 +74,183 @@ function diffFlows(base, target){
 }
 
 /* 写し（snapshot）を取った後に、比較元（current）がどう変わったか。tobe はその写しを持つ ToBe。
-   ステップ ID が同じものを同じステップとして比べる（from は使わない）。返す並びの 1 件：
-   { key, type, … , canApply, conflict }
+   ステップ ID が同じものを同じステップとして比べる（比較元と写しの間では from は使わない）。返す並びの 1 件：
+   { key, type, … , canApply, conflict, why }
      type：laneName（担当の名前）/ addLane / delLane / field（ステップの項目）/ addStep / delStep / edgeWhen（矢印の条件）/ addEdge / delEdge / addRel / delRel
-     canApply：ToBe にもそのまま反映できるか（第 1 段では項目・条件・担当の名前だけ。ステップや矢印の追加・削除は「取り込まない」だけ）
+     canApply：ToBe にも反映できるか
      conflict：ToBe でも同じ所を変えている（反映すると ToBe の変更を上書きする）
-   足された・消されたステップに出入りする矢印は、そのステップの件（addStep・delStep）の edges にまとめる */
+     why：反映できない理由。noStep・noLane・noEdge＝ToBe にそのステップ・担当・矢印がない / split・merged＝ToBe でそのステップを分割・統合している /
+       laneLater＝使う担当が、比較元で足して ToBe にまだない担当 /
+       laneUsed＝消した担当に、ToBe ではまだステップがある / idClash＝ToBe で別々に足した同じ ID がある / replaced＝消したステップを ToBe で置き換えている /
+       noEnd＝矢印・関連の端（whyId）が ToBe にない
+   ステップの項目・矢印の両端には、ToBe 側の ID（target・tFrom・tTo）を持たせる。ToBe に同じ ID がなければ、from でそのステップを指す ToBe のステップ
+   （置き換え先）にする。置き換え先が 2 つ以上（分割）なら決められない。統合（from に 2 つ以上）した先は、矢印の端にはしてよいが、項目は決められない。
+   矢印・関連のうち、足された・消されたステップに出入りするもの、そのステップを消した・矢印の間に入れたときのつなぎ直し（前→後）、
+   流れのステップを帳票・データに変えたときのつなぎ直しは、そのステップの件（addStep・delStep・種類の field）の edges にまとめる。
+   その件の miss は、まとめた矢印・関連の相手のうち ToBe にないもの（反映してもつながない）。
+   担当の削除は並びの最後に置く（先にステップの担当の変更を決められるように） */
 function updatesSince(tobe, current){
   const snap = tobe.compare?.snapshot; if (!snap) return [];
-  const out = [];
+  const out = [], tail = [];
   const sBy = new Map(snap.steps.map(s => [s.id, s])), cBy = new Map(current.steps.map(s => [s.id, s])), tBy = new Map(tobe.steps.map(s => [s.id, s]));
   const sLane = new Map(snap.lanes.map(l => [l.id, l])), cLane = new Map(current.lanes.map(l => [l.id, l])), tLane = new Map(tobe.lanes.map(l => [l.id, l]));
+  // ToBe で ID を変えて置き換えたステップ：写しのステップ ID -> from でそれを指す ToBe のステップの並び
+  const reps = new Map();
+  tobe.steps.forEach(t => { if (!sBy.has(t.id)) (t.from || []).forEach(id => { if (sBy.has(id)) (reps.get(id) || reps.set(id, []).get(id)).push(t); }); });
+  // ToBe でのステップ { id } か、決められない理由 { why }。whole なら統合した先も同じものとする
+  const toTobe = (id, whole) => {
+    if (tBy.has(id)) return { id };
+    const r = reps.get(id) || [];
+    if (!r.length) return { why: "noStep" };
+    if (r.length > 1) return { why: "split" };
+    if (!whole && r[0].from.filter(x => sBy.has(x)).length > 1) return { why: "merged" };
+    return { id: r[0].id };
+  };
+  const tid = id => toTobe(id, true).id || null;
+  // ステップを置く担当が ToBe にないときの理由
+  const laneWhy = lane => tLane.has(lane) ? "" : cLane.has(lane) && !sLane.has(lane) ? "laneLater" : "noLane";
   current.lanes.forEach(l => {
-    const s = sLane.get(l.id);
-    if (!s) out.push({ key: "lane+" + l.id, type: "addLane", lane: clone(l), canApply: false, conflict: false });
-    else if (s.name !== l.name){ const t = tLane.get(l.id); out.push({ key: "lane:" + l.id, type: "laneName", lane: l.id, from: s.name, to: l.name, canApply: !!t, conflict: !!t && t.name !== s.name }); }
+    const s = sLane.get(l.id), t = tLane.get(l.id);
+    if (!s) out.push({ key: "lane+" + l.id, type: "addLane", lane: clone(l), canApply: !t, conflict: false, why: t ? "idClash" : "" });
+    else if (s.name !== l.name) out.push({ key: "lane:" + l.id, type: "laneName", lane: l.id, from: s.name, to: l.name, canApply: !!t, conflict: !!t && t.name !== s.name, why: t ? "" : "noLane" });
   });
-  snap.lanes.forEach(l => { if (!cLane.has(l.id)) out.push({ key: "lane-" + l.id, type: "delLane", lane: clone(l), canApply: false, conflict: false }); });
-  const stepItems = new Map();
+  snap.lanes.forEach(l => {
+    if (cLane.has(l.id)) return;
+    const t = tLane.get(l.id), used = tobe.steps.some(s => s.lane === l.id);
+    tail.push({ key: "lane-" + l.id, type: "delLane", lane: clone(l), canApply: !used, conflict: !!t && t.name !== l.name, why: used ? "laneUsed" : "" });
+  });
+  const stepItems = new Map(), artItems = new Map();
   current.steps.forEach(c => {
     const s = sBy.get(c.id);
-    if (!s){ const it = { key: "step+" + c.id, type: "addStep", id: c.id, step: clone(c), edges: [], canApply: false, conflict: tBy.has(c.id) }; stepItems.set(c.id, it); out.push(it); return; }
-    const t = tBy.get(c.id);
+    if (!s){
+      const why = tBy.has(c.id) ? "idClash" : laneWhy(c.lane);
+      const it = { key: "step+" + c.id, type: "addStep", id: c.id, step: clone(c), edges: [], miss: [], canApply: !why, conflict: false, why }; stepItems.set(c.id, it); out.push(it); return;
+    }
+    const m = toTobe(c.id, false), target = m.id || null, t = tBy.get(target);
     Object.keys(UPDATE_FIELDS).forEach(k => {
       if (val(s, k) === val(c, k)) return;
-      out.push({ key: `field:${c.id}:${k}`, type: "field", id: c.id, field: k, from: val(s, k), to: val(c, k), canApply: !!t, conflict: !!t && val(t, k) !== val(s, k) });
+      // 担当の変更は、移る先の担当が ToBe にあるときだけ反映できる（ないまま反映すると、担当一覧にない担当を指す）
+      const why = !t ? m.why : k === "lane" ? laneWhy(c.lane) : "";
+      const it = { key: `field:${c.id}:${k}`, type: "field", id: c.id, target, field: k, from: val(s, k), to: val(c, k), canApply: !why, conflict: !!t && val(t, k) !== val(s, k), why };
+      if (k === "type" && isArtifact(c) && !isArtifact(s)){ it.edges = []; it.miss = []; artItems.set(c.id, it); }
+      out.push(it);
     });
   });
   snap.steps.forEach(s => {
     if (cBy.has(s.id)) return;
-    const used = tBy.has(s.id) || tobe.steps.some(t => (t.from || []).includes(s.id));
-    const it = { key: "step-" + s.id, type: "delStep", id: s.id, step: clone(s), edges: [], canApply: false, conflict: used }; stepItems.set(s.id, it); out.push(it);
+    const t = tBy.get(s.id), rep = !t && reps.has(s.id);
+    // ToBe で変えていたステップを消すと、ToBe の変更もなくなる
+    const it = { key: "step-" + s.id, type: "delStep", id: s.id, step: clone(s), edges: [], canApply: !rep, conflict: !!t && Object.keys(UPDATE_FIELDS).some(k => val(s, k) !== val(t, k)), why: rep ? "replaced" : "" };
+    stepItems.set(s.id, it); out.push(it);
   });
-  // 矢印・関連。足された・消されたステップに出入りするものは、そのステップの件にまとめる
-  const edgeItem = (it, a, b) => { const g = stepItems.get(a) || stepItems.get(b); if (g) g.edges.push(it); else out.push(it); };
+  // 矢印・関連
+  const edges = [];
   const nextOf = (by, id) => by.get(id)?.next || [], relOf = (by, id) => by.get(id)?.related || [];
   const ids = new Set([...sBy.keys(), ...cBy.keys()]);
   ids.forEach(id => {
     const sn = nextOf(sBy, id), cn = nextOf(cBy, id);
     cn.forEach(e => {
       const o = sn.find(x => x.to === e.to);
-      if (!o) edgeItem({ key: `edge+${id}>${e.to}`, type: "addEdge", from: id, to: e.to, edge: clone(e), canApply: false, conflict: false }, id, e.to);
+      if (!o) edges.push({ key: `edge+${id}>${e.to}`, type: "addEdge", from: id, to: e.to, edge: clone(e) });
       else if ((o.when || "") !== (e.when || "")){
-        const te = nextOf(tBy, id).find(x => x.to === e.to);
-        out.push({ key: `when:${id}>${e.to}`, type: "edgeWhen", from: id, to: e.to, old: o.when || "", now: e.when || "", canApply: !!te, conflict: !!te && (te.when || "") !== (o.when || "") });
+        const tFrom = tid(id), tTo = tid(e.to), te = tFrom && tTo ? nextOf(tBy, tFrom).find(x => x.to === tTo) : null;
+        out.push({ key: `when:${id}>${e.to}`, type: "edgeWhen", from: id, to: e.to, tFrom, tTo, old: o.when || "", now: e.when || "", canApply: !!te, conflict: !!te && (te.when || "") !== (o.when || ""), why: te ? "" : "noEdge" });
       }
     });
-    sn.forEach(o => { if (!cn.some(e => e.to === o.to)) edgeItem({ key: `edge-${id}>${o.to}`, type: "delEdge", from: id, to: o.to, edge: clone(o), canApply: false, conflict: false }, id, o.to); });
+    sn.forEach(o => { if (!cn.some(e => e.to === o.to)) edges.push({ key: `edge-${id}>${o.to}`, type: "delEdge", from: id, to: o.to, edge: clone(o) }); });
     const sr = relOf(sBy, id), cr = relOf(cBy, id);
-    cr.forEach(to => { if (!sr.includes(to)) edgeItem({ key: `rel+${id}~${to}`, type: "addRel", from: id, to, canApply: false, conflict: false }, id, to); });
-    sr.forEach(to => { if (!cr.includes(to)) edgeItem({ key: `rel-${id}~${to}`, type: "delRel", from: id, to, canApply: false, conflict: false }, id, to); });
+    cr.forEach(to => { if (!sr.includes(to)) edges.push({ key: `rel+${id}~${to}`, type: "addRel", from: id, to }); });
+    sr.forEach(to => { if (!cr.includes(to)) edges.push({ key: `rel-${id}~${to}`, type: "delRel", from: id, to }); });
   });
-  return out;
+  // まとめる先：端のステップの件。なければ、前→後の矢印の追加はその間のステップを消した・帳票に変えた件、前→後の矢印の削除はその間に入れたステップの件
+  const has = (by, a, b) => !!by.get(a)?.next.some(e => e.to === b);
+  const groupOf = it => {
+    const g = new Set([it.from, it.to].map(id => stepItems.get(id) || artItems.get(id)).filter(Boolean));
+    if (g.size) return [...g];
+    const between = (x, by) => has(by, it.from, x.id) && has(by, x.id, it.to);
+    if (it.type === "addEdge") return [...stepItems.values(), ...artItems.values()].filter(x => x.type !== "addStep" && between(x, sBy)).slice(0, 1);
+    if (it.type === "delEdge") return [...stepItems.values()].filter(x => x.type === "addStep" && between(x, cBy)).slice(0, 1);
+    return [];
+  };
+  const pending = id => stepItems.get(id)?.type === "addStep";
+  edges.forEach(it => {
+    const g = groupOf(it);
+    // ToBe 側の両端。足すステップはその ID のまま（反映するときに ToBe にあるかを見る）
+    const end = id => pending(id) ? id : tid(id);
+    it.tFrom = end(it.from); it.tTo = end(it.to);
+    if (g.length){
+      g.forEach(x => {
+        x.edges.push(it);
+        if (x.miss) [it.from, it.to].forEach(id => { if (id !== x.id && !pending(id) && !tid(id) && !x.miss.includes(id)) x.miss.push(id); });
+      });
+      return;
+    }
+    // 消すほうは、ToBe になければ何もしない。足すほうは、両端が ToBe にあるときだけ
+    const miss = it.type.startsWith("add") ? [it.from, it.to].find(id => !tid(id)) : null;
+    out.push(Object.assign(it, { canApply: !miss, conflict: false, why: miss ? "noEnd" : "", whyId: miss || "" }));
+  });
+  return out.concat(tail);
 }
 
 /* 写しの後の更新 1 件を決める。how：apply＝ToBe にも反映する / keep＝取り込まない（ToBe はそのまま。違いは ToBe での変更として残る）。
    どちらでも写しをその件の分だけ今の比較元に進める。すべて決め終わったら compare.at を now にする。
+   ToBe には ToBe 側の ID（target・tFrom・tTo）で反映し、矢印・関連は両端が ToBe にあるときだけ足す。
+   写しから消えたステップを指す、ToBe の削除の理由（removed）と置き換え元（from）は外す。
    tobe（の写し）をその場で書き換える。反映できない件で apply を頼まれたら、何もせず false を返す */
 function resolveUpdate(tobe, current, item, how, now){
   if (how === "apply" && !item.canApply) return false;
   const snap = tobe.compare.snapshot;
-  const apply = how === "apply" ? [snap, tobe] : [snap];
   const stepOf = (F, id) => F.steps.find(s => s.id === id);
-  const edgeChange = (F, it) => {
-    const s = stepOf(F, it.from);
-    if (it.type === "addEdge"){ if (s && !s.next.some(e => e.to === it.to)) s.next.push(clone(it.edge)); }
-    else if (it.type === "delEdge"){ if (s) s.next = s.next.filter(e => e.to !== it.to); }
-    else if (it.type === "addRel"){ if (s){ s.related ||= []; if (!s.related.includes(it.to)) s.related.push(it.to); } }
-    else if (it.type === "delRel"){ if (s) s.related = (s.related || []).filter(to => to !== it.to); }
+  // 足す矢印は、比較元でその後ろにある矢印の前に入れる（分岐の並びを比較元と同じにする）
+  const nextAt = (s, it) => {
+    const cn = stepOf(current, it.from)?.next || [], i = cn.findIndex(e => e.to === it.to);
+    for (let k = i + 1; i >= 0 && k < cn.length; k++){ const j = s.next.findIndex(e => e.to === cn[k].to); if (j >= 0) return j; }
+    return s.next.length;
   };
-  apply.forEach(F => {
+  const edgeChange = (F, it, onTobe) => {
+    const a = onTobe ? it.tFrom : it.from, b = onTobe ? it.tTo : it.to, s = a && stepOf(F, a);
+    if (!s || !b || onTobe && it.type.startsWith("add") && !stepOf(F, b)) return;
+    if (it.type === "addEdge"){ if (!s.next.some(e => e.to === b)) s.next.splice(nextAt(s, it), 0, { ...clone(it.edge), to: b }); }
+    else if (it.type === "delEdge") s.next = s.next.filter(e => e.to !== b);
+    else if (it.type === "addRel"){ s.related ||= []; if (!s.related.includes(b)) s.related.push(b); }
+    else if (it.type === "delRel") s.related = (s.related || []).filter(to => to !== b);
+  };
+  // 足すステップは、比較元で前にあるステップのうち F にもある最後のものの後ろに置く
+  const placeAt = F => {
+    const cs = current.steps, i = cs.findIndex(s => s.id === item.id);
+    for (let k = i - 1; k >= 0; k--){ const j = F.steps.findIndex(s => s.id === cs[k].id); if (j >= 0) return j + 1; }
+    return 0;
+  };
+  const run = (F, onTobe) => {
     switch (item.type){
       case "laneName": { const l = F.lanes.find(x => x.id === item.lane); if (l) l.name = item.to; break; }
       case "addLane": if (!F.lanes.some(l => l.id === item.lane.id)){ const i = current.lanes.findIndex(l => l.id === item.lane.id); F.lanes.splice(Math.min(i, F.lanes.length), 0, clone(item.lane)); } break;
       case "delLane": F.lanes = F.lanes.filter(l => l.id !== item.lane.id); break;
-      case "field": { const s = stepOf(F, item.id); if (s) s[item.field] = item.to; break; }
-      case "edgeWhen": { const e = stepOf(F, item.from)?.next.find(x => x.to === item.to); if (e) e.when = item.now; break; }
-      case "addStep": if (!stepOf(F, item.id)){ const s = clone(item.step); s.next = []; s.related = []; F.steps.push(s); } item.edges.forEach(e => edgeChange(F, e)); break;
+      case "field": {
+        const s = stepOf(F, onTobe ? item.target : item.id);
+        if (s){ s[item.field] = item.to; if (item.field === "type" && !colorable(s)) delete s.color; }
+        (item.edges || []).forEach(e => edgeChange(F, e, onTobe));
+        break;
+      }
+      case "edgeWhen": { const e = stepOf(F, onTobe ? item.tFrom : item.from)?.next.find(x => x.to === (onTobe ? item.tTo : item.to)); if (e) e.when = item.now; break; }
+      case "addStep":
+        if (!stepOf(F, item.id)){ const s = clone(item.step); s.next = []; s.related = []; delete s.from; delete s.change; F.steps.splice(placeAt(F), 0, s); }
+        item.edges.forEach(e => edgeChange(F, e, onTobe));
+        break;
       case "delStep":
         F.steps = F.steps.filter(s => s.id !== item.id);
         F.steps.forEach(s => { s.next = s.next.filter(e => e.to !== item.id); s.related = (s.related || []).filter(to => to !== item.id); });
+        item.edges.forEach(e => edgeChange(F, e, onTobe));
         break;
-      default: edgeChange(F, item);
+      default: edgeChange(F, item, onTobe);
     }
-  });
+  };
+  run(snap, false);
+  if (how === "apply") run(tobe, true);
+  if (item.type === "delStep"){
+    if (tobe.removed){ tobe.removed = tobe.removed.filter(r => r.id !== item.id); if (!tobe.removed.length) delete tobe.removed; }
+    tobe.steps.forEach(s => { if (s.from?.includes(item.id)){ s.from = s.from.filter(x => x !== item.id); if (!s.from.length) delete s.from; } });
+  }
   if (!updatesSince(tobe, current).length) tobe.compare.at = now;
   return true;
 }
@@ -197,9 +290,10 @@ function setBase(f, asis, now){
 }
 
 /* 新しいステップ ID を振るときに避ける ID：自分・自分の写し・比較元（今の版）、自分を比較元にしている ToBe（とその写し）のステップ。
-   AsIs と ToBe で別々に同じ番号を振ると、中身の違うステップを同じものとして比べてしまうため。flows は読み込んだすべてのフロー */
-function familyIds(f, flows){
-  const ids = new Set(), add = F => F && F.steps.forEach(s => ids.add(s.id));
+   AsIs と ToBe で別々に同じ番号を振ると、中身の違うステップを同じものとして比べてしまうため。flows は読み込んだすべてのフロー。
+   key を "lanes" にすると、担当の ID を返す */
+function familyIds(f, flows, key = "steps"){
+  const ids = new Set(), add = F => F && F[key].forEach(s => ids.add(s.id));
   add(f); add(f.compare?.snapshot);
   if (f.compare) add(flows.find(g => g.id === f.compare.base));
   if (f.id) flows.forEach(g => { if (g !== f && g.compare?.base === f.id){ add(g); add(g.compare.snapshot); } });
