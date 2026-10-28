@@ -939,7 +939,8 @@ onPanels("click", ev => {
   const act = b.dataset.act, s = curStep(), i = +b.dataset.i;
   switch (act){
     case "select": select(S.selected === b.dataset.id ? null : b.dataset.id, false); return;
-    case "lane-add": { const id = uid("lane", new Set(S.flow.lanes.map(l => l.id))); S.flow.lanes.push({ id, name: "新しい担当" }); commit({ form: true }); const el = $("#lane-" + CSS.escape(id)); el && (el.focus(), el.select()); return; }
+    // 担当 ID も、比較でつながるフローの担当と別々に同じ ID を振らないようにする（familyIds）
+    case "lane-add": { const id = uid("lane", familyIds(S.flow, allFlows().map(x => x.f), "lanes")); S.flow.lanes.push({ id, name: "新しい担当" }); commit({ form: true }); const el = $("#lane-" + CSS.escape(id)); el && (el.focus(), el.select()); return; }
     case "lane-up": [S.flow.lanes[i - 1], S.flow.lanes[i]] = [S.flow.lanes[i], S.flow.lanes[i - 1]]; break;
     case "lane-down": [S.flow.lanes[i + 1], S.flow.lanes[i]] = [S.flow.lanes[i], S.flow.lanes[i + 1]]; break;
     case "lane-del": {
@@ -1871,7 +1872,7 @@ $("#cmpBar").addEventListener("click", ev => {
   if (ev.target.closest("[data-cmp-split]")){ setView("split"); return; }
   if (ev.target.closest("#cmpUpd")) showTab("cmp");
 });
-const laneNm = id => S.flow.lanes.find(l => l.id === id)?.name || S.flow.compare?.snapshot.lanes.find(l => l.id === id)?.name || id;
+const laneNm = id => S.flow.lanes.find(l => l.id === id)?.name || S.flow.compare?.snapshot.lanes.find(l => l.id === id)?.name || S.cmp?.base?.lanes.find(l => l.id === id)?.name || id;
 const short = t => { t = String(t).replace(/\s*\n\s*/g, " "); return t.length > 40 ? t.slice(0, 39) + "…" : t; };
 const fieldVal = (k, v) => k === "type" ? TYPES[v] || v : k === "lane" ? laneNm(v) : v;
 // ステップの差分（diffFlows の steps の値）を短い文の並びにする
@@ -1900,18 +1901,58 @@ function cmpItems(){
   S.cmp.d.removed.forEach(b => items.push({ key: "r:" + b.id, s: b, x: null }));
   return items;
 }
+const updLbl = id => `「${short((S.cmp.base.steps.find(s => s.id === id) || S.flow.compare.snapshot.steps.find(s => s.id === id))?.label || id)}」`;
+// 担当の名前。担当 ID だけを変えたときなど、同じ名前の担当がほかにもあれば ID も出す
+const updLaneLbl = l => `「${l.name}」` + ([...S.cmp.base.lanes, ...S.flow.compare.snapshot.lanes].some(x => x.id !== l.id && x.name === l.name) ? `（${l.id}）` : "");
 function updateText(u){
-  const lbl = id => `「${short((S.cmp.base.steps.find(s => s.id === id) || S.flow.compare.snapshot.steps.find(s => s.id === id))?.label || id)}」`;
+  // まとめた矢印・関連に前→後の矢印（間のステップを消した・入れた・帳票に変えた）があれば、つなぎ直し
+  const via = u.edges?.some(e => e.from !== u.id && e.to !== u.id);
   switch (u.type){
     case "laneName": return [`担当名`, `「${u.from}」→「${u.to}」`];
-    case "addLane": return [`担当を追加`, `「${u.lane.name}」`];
-    case "delLane": return [`担当を削除`, `「${u.lane.name}」`];
-    case "field": return [lbl(u.id), `${UPDATE_FIELDS[u.field]}：${u.from ? `「${short(fieldVal(u.field, u.from))}」` : "なし"} → ${u.to ? `「${short(fieldVal(u.field, u.to))}」` : "なし"}`];
-    case "addStep": return [`「${short(u.step.label || u.id)}」`, `ステップを追加`];
-    case "delStep": return [`「${short(u.step.label || u.id)}」`, `ステップを削除`];
-    case "edgeWhen": return [`${lbl(u.from)} → ${lbl(u.to)}`, `条件：「${u.old || "なし"}」→「${u.now || "なし"}」`];
-    default: return [`${lbl(u.from)} → ${lbl(u.to)}`, { addEdge: "矢印を追加", delEdge: "矢印を削除", addRel: "関連を追加", delRel: "関連を削除" }[u.type]];
+    case "addLane": return [`担当を追加`, updLaneLbl(u.lane)];
+    case "delLane": return [`担当を削除`, updLaneLbl(u.lane)];
+    case "field": {
+      // 担当 ID だけを変えたときなど、前後で担当の名前が同じなら ID も出す
+      let [a, b] = [u.from, u.to].map(v => short(fieldVal(u.field, v)));
+      if (u.field === "lane" && a === b){ a += `（${u.from}）`; b += `（${u.to}）`; }
+      return [updLbl(u.id), `${UPDATE_FIELDS[u.field]}：${u.from ? `「${a}」` : "なし"} → ${u.to ? `「${b}」` : "なし"}${u.edges?.length ? (via ? "（前後をつなぎ直す）" : "（つながる矢印・関連も）") : ""}`];
+    }
+    case "addStep": return [`「${short(u.step.label || u.id)}」`, `ステップを追加${via ? "（矢印の間に入れる）" : ""}`];
+    case "delStep": return [`「${short(u.step.label || u.id)}」`, `ステップを削除${via ? "（前後をつなぎ直す）" : ""}`];
+    case "edgeWhen": return [`${updLbl(u.from)} → ${updLbl(u.to)}`, `条件：「${u.old || "なし"}」→「${u.now || "なし"}」`];
+    default: return [`${updLbl(u.from)} → ${updLbl(u.to)}`, { addEdge: "矢印を追加", delEdge: "矢印を削除", addRel: "関連を追加", delRel: "関連を削除" }[u.type]];
   }
+}
+// AsIs の更新を ToBe に反映できない理由（updatesSince の why）
+const updLane = u => u.type === "field" ? u.to : u.type === "addStep" ? u.step.lane : u.lane.id ?? u.lane;
+const UPD_WHY = {
+  noStep: () => "ToBe にこのステップがないため、反映できません",
+  split: () => "ToBe でこのステップを分割しているため、どれに反映するか決められません",
+  merged: () => "ToBe でこのステップをほかと統合しているため、反映できません",
+  noLane: u => `ToBe に担当「${laneNm(updLane(u))}」がないため、反映できません`,
+  laneLater: u => `担当「${laneNm(updLane(u))}」は AsIs で足した担当です。先に「担当を追加」を反映してください`,
+  laneUsed: () => "ToBe ではこの担当にまだステップがあるため、反映できません",
+  idClash: u => `ToBe で別に足した、同じ ID の${u.type === "addLane" ? "担当" : "ステップ"}があるため、反映できません`,
+  replaced: () => "ToBe で置き換えたステップのため、反映できません（取り込まないと、置き換え先は新しいステップになります）",
+  noEnd: u => `ToBe に${updLbl(u.whyId)}がないため、反映できません`,
+  noEdge: () => "ToBe にこの矢印がないため、反映できません"
+};
+// 更新 1 件の補足の行：[class, 文]。ToBe の今の値（ぶつかるとき）・反映できない理由・反映してもつながない相手
+function updateNotes(u){
+  const L = [];
+  if (u.conflict){
+    if (u.type === "field"){ const t = S.flow.steps.find(s => s.id === u.target); if (t) L.push(["cf", `ToBe：「${short(fieldVal(u.field, t[u.field]) || "なし")}」`]); }
+    else if (u.type === "laneName" || u.type === "delLane"){ const l = S.flow.lanes.find(x => x.id === (u.lane.id ?? u.lane)); if (l) L.push(["cf", `ToBe：「${l.name}」`]); }
+    else if (u.type === "edgeWhen"){ const e = S.flow.steps.find(s => s.id === u.tFrom)?.next.find(x => x.to === u.tTo); if (e) L.push(["cf", `ToBe：「${e.when || "なし"}」`]); }
+    else if (u.type === "delStep") L.push(["cf", "ToBe ではこのステップの内容などを変えています"]);
+  }
+  if (!u.canApply && UPD_WHY[u.why]) L.push(["nb", UPD_WHY[u.why](u)]);
+  if (u.canApply && u.miss?.length) L.push(["nb", `ToBe にない${u.miss.map(updLbl).join("・")}とはつなぎません`]);
+  // ToBe で置き換えたステップには、置き換え先に反映する
+  const tLbl = id => `「${short(S.flow.steps.find(s => s.id === id)?.label || id)}」`;
+  if (u.canApply && u.type === "field" && u.target !== u.id) L.push(["nb", `ToBe では置き換え先の${tLbl(u.target)}に反映します`]);
+  if (u.canApply && u.type === "edgeWhen" && (u.tFrom !== u.from || u.tTo !== u.to)) L.push(["nb", `ToBe では${tLbl(u.tFrom)} → ${tLbl(u.tTo)}の矢印に反映します`]);
+  return L;
 }
 function renderCmp(){
   const el = $("#tab-cmp"); if (!S.flow) return;
@@ -1926,11 +1967,12 @@ function renderCmp(){
   if (!S.cmp){ el.innerHTML = h; return; }
   if (S.cmp.ups.length){
     h += `<div class="sec upd-sec"><div class="sec-head"><h3>AsIs の更新 <span class="count">${S.cmp.ups.length}</span></h3></div><ul class="chg-list">` + S.cmp.ups.map((u, i) => {
-      const [a, b] = updateText(u), t = u.type === "field" ? S.flow.steps.find(s => s.id === u.id) : null;
-      const acts = !u.canApply ? `<button class="btn sm" data-upd="${i}:keep" title="ステップ・矢印の追加と削除は、まだ ToBe に反映できません。必要なら ToBe を直してから押してください">取り込まない</button>`
+      const [a, b] = updateText(u);
+      const acts = !u.canApply ? `<button class="btn sm" data-upd="${i}:keep" title="ToBe はそのままにします。必要なら ToBe を直してから押してください">取り込まない</button>`
         : u.conflict ? `<button class="btn sm" data-upd="${i}:apply">AsIs に合わせる</button><button class="btn sm" data-upd="${i}:keep">ToBe のまま</button>`
         : `<button class="btn sm primary" data-upd="${i}:apply">反映</button><button class="btn sm" data-upd="${i}:keep">取り込まない</button>`;
-      return `<li class="ui"><div class="ci-top"><span class="lb">${esc(a)}</span></div><div class="ci-d">${esc(b)}</div>${u.conflict && t ? `<div class="ci-d cf">ToBe：「${esc(short(fieldVal(u.field, t[u.field]) || "なし"))}」</div>` : ""}<div class="acts">${acts}</div></li>`;
+      return `<li class="ui"><div class="ci-top"><span class="lb">${esc(a)}</span></div><div class="ci-d">${esc(b)}</div>`
+        + updateNotes(u).map(([k, t]) => `<div class="ci-d ${k}">${esc(t)}</div>`).join("") + `<div class="acts">${acts}</div></li>`;
     }).join("") + `</ul></div>`;
   }
   const items = cmpItems(), n = cmpCounts();
