@@ -1,4 +1,6 @@
 docs/
 CLAUDE.local.md
-.claude/
+.claude/*
+!.claude/skills/
+!.claude/rules/
 AGENTS.md

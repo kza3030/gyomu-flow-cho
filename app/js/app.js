@@ -1849,7 +1849,7 @@ const sw = k => `<i class="sw ${k}" aria-hidden="true"></i>`;
 // 比較の帯：表示（なし／変更箇所／並べる）、並べる向き（並べるときだけ）、変わらない所を薄くするか（差分を出すときだけ）、差分の数、AsIs の更新
 function updateCmpUi(){
   const on = !!S.cmp, bar = $("#cmpBar");
-  bar.hidden = !on; $("#expCmp").hidden = !on;
+  bar.hidden = !on; $("#expCmp").hidden = !on; $("#expCmpCopy").hidden = !on;
   if (!on) return;
   $("#cmpTitle").textContent = S.cmp.base ? `AsIs「${S.cmp.base.name}」と比較` : "AsIs（写し）と比較";
   bar.querySelectorAll("[name=cmpView]").forEach(r => { r.checked = r.value === S.cmpView; });
@@ -2163,6 +2163,8 @@ $("#exportMenu").addEventListener("click", ev => {
   switch (b.dataset.exp){
     case "copy-yaml": copyText(S.yamlSrc, "YAML"); break;
     case "copy-mermaid": copyText(mermaid(S.flow), "Mermaid記法"); break;
+    case "copy-md": copyText(markdown(S.flow), "手順書"); break;
+    case "copy-cmp": if (S.cmp) copyText(cmpMarkdown(S.flow), "比較レポート"); break;
     case "image": openImgDialog(); break;
     case "save-yaml": exportFlow(safeName(S.flow.name) + ".yaml", S.yamlSrc.replace(/\n?$/, "\n")); break;
     case "save-md": exportFlow(safeName(S.flow.name) + ".md", markdown(S.flow)); break;
