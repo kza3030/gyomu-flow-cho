@@ -19,7 +19,7 @@ function validate(f, ctx = {}){
     if (!s.label.trim()) push("warn", `「${s.id}」に内容が書かれていません。`, s.id);
     if (!laneIds.has(s.lane)) push("bad", `「${nm}」の担当「${s.lane || "未設定"}」が担当一覧にありません。`, s.id);
     s.next.forEach(e => { if (!ids.has(e.to)) push("bad", `「${nm}」の次「${e.to}」というステップはありません。`, s.id); });
-    (s.related || []).forEach(to => {
+    (s.related || []).forEach(({ to }) => {
       if (!ids.has(to)) push("bad", `「${nm}」の関連「${to}」というステップはありません。`, s.id);
       else if (to === s.id) push("info", `「${nm}」の関連に自分自身が入っています。`, s.id);
     });
@@ -32,7 +32,7 @@ function validate(f, ctx = {}){
     const seen = new Set(), stack = starts.map(s => s.id), byId = new Map(f.steps.map(s => [s.id, s]));
     /* 関連（点線）は、向きを問わず帳票・データへだけたどる（流れの中で作る・使う帳票を、たどり着けないとしない）。
        帳票・データ以外のステップへは、流れの矢印でたどり着けなければならない */
-    const rel = new Map(); f.steps.forEach(s => (s.related || []).forEach(to => { [[s.id, to], [to, s.id]].forEach(([a, b]) => { if (!rel.has(a)) rel.set(a, []); rel.get(a).push(b); }); }));
+    const rel = new Map(); f.steps.forEach(s => (s.related || []).forEach(({ to }) => { [[s.id, to], [to, s.id]].forEach(([a, b]) => { if (!rel.has(a)) rel.set(a, []); rel.get(a).push(b); }); }));
     while (stack.length){ const id = stack.pop(); if (seen.has(id)) continue; seen.add(id); (byId.get(id)?.next || []).forEach(e => stack.push(e.to)); (rel.get(id) || []).forEach(to => { if (isArtifact(byId.get(to))) stack.push(to); }); }
     f.steps.forEach(s => { if (!seen.has(s.id)) push("warn", `「${s.label || s.id}」は開始からたどり着けません。`, s.id); });
   }

@@ -343,10 +343,10 @@ textarea.inp.info-inp{resize:vertical;min-height:0}
 .body.focus{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
 .body.focus .panel,.body.focus .splitter,.body.focus .memo{display:none}
 @media (min-width:861px){.body.focus .side{display:none}}
-#issueBtn svg,#infoBtn svg{width:14px;height:14px;flex:none}
+#issueBtn svg,#infoBtn svg,#tidyBtn svg{width:14px;height:14px;flex:none}
 #issueBtn .cnt{background:color-mix(in srgb,var(--bad) 14%,transparent);color:var(--bad);border-radius:999px;padding:0 6px;font-size:11px;font-weight:600;line-height:16px;font-variant-numeric:tabular-nums}
-#infoBtn .cnt{background:var(--accent-soft);color:var(--accent);border-radius:999px;padding:0 6px;font-size:11px;font-weight:600;line-height:16px;font-variant-numeric:tabular-nums}
-#issueBtn:disabled,#infoBtn:disabled{opacity:.5;cursor:default}
+#infoBtn .cnt,#tidyBtn .cnt{background:var(--accent-soft);color:var(--accent);border-radius:999px;padding:0 6px;font-size:11px;font-weight:600;line-height:16px;font-variant-numeric:tabular-nums}
+#issueBtn:disabled,#infoBtn:disabled,#tidyBtn:disabled{opacity:.5;cursor:default}
 #issueBtn[aria-pressed="true"],#infoBtn[aria-pressed="true"],#focusBtn[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
 @media (prefers-reduced-motion:reduce){.side{transition:none}.splitter::after,.memo-split::after,.memo-toggle svg,.legend-toggle svg{transition:none}}
 
