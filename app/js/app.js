@@ -4,7 +4,7 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const {
   TEMPLATES,
-  TYPES, TOOL_NAME, hasTool, COLORS, colorable, SIDES, sideIn, sideOut, normNext, isArtifact, artifactLinks, toArtifact, normalize, toYaml, parseYaml, uid, KINDS, newFlowId,
+  TYPES, TOOL_NAME, hasTool, COLORS, colorable, SIDES, sideIn, sideOut, normNext, relates, isArtifact, artifactLinks, toArtifact, pinnedEdges, unpinEdges, normalize, toYaml, parseYaml, uid, KINDS, newFlowId,
   validate,
   DIFF_FIELDS, UPDATE_FIELDS, diffFlows, updatesSince, resolveUpdate, makeToBe, toBeName, setBase, familyIds,
   G, LB, CO, DB_RY, textW, edgeLabel, labelCut, linkedIds, layout, calloutPlan, topY, atOff, offAt, portAt, placeLabel, wrapText, wrapLabel
@@ -103,7 +103,7 @@ const edgeKey = E => (E.assoc ? "r" : "") + E.k;
 const refOf = (sid, key) => ({ sid, k: parseInt(String(key).replace(/^r/, ""), 10), ...(String(key)[0] === "r" ? { rel: true } : {}) });
 const isRef = (E, ref) => !!ref && E.s.id === ref.sid && E.k === ref.k && E.assoc === !!ref.rel;
 // ref の線のつなぎ先の id。もうない線なら undefined
-const refTo = ref => { const s = ref && S.flow?.steps.find(x => x.id === ref.sid); return s && (ref.rel ? s.related?.[ref.k] : s.next[ref.k]?.to); };
+const refTo = ref => { const s = ref && S.flow?.steps.find(x => x.id === ref.sid); return s && (ref.rel ? s.related?.[ref.k] : s.next[ref.k])?.to; };
 // 折れ線 pts の、端から長さの割合 r の点
 function alongPts(pts, r){
   const seg = pts.slice(1).map((q, i) => Math.hypot(q[0] - pts[i][0], q[1] - pts[i][1]));
@@ -246,8 +246,8 @@ function diagramBodySvg(f, L, W, H, o){
   const SE = L.edges.find(isSelEdge);
   if (SE){
     const end = (k, [x, y], tip) => `<circle class="ehandle" data-end="${k}" cx="${x}" cy="${y}" r="6"><title>${esc(tip)}</title></circle>`;
-    s += end("s", SE.pts[0], SE.assoc ? "ドラッグで関連元のステップを変える" : "ドラッグで出るステップ・出る辺と位置を変える（箱の真ん中で離すと自動）");
-    s += end("t", SE.pts[SE.pts.length - 1], SE.assoc ? "ドラッグで関連先のステップを変える" : "ドラッグでつなぎ先・入る辺と位置を変える（箱の真ん中で離すと自動）");
+    s += end("s", SE.pts[0], `ドラッグで${SE.assoc ? "関連元" : "出るステップ"}・出る辺と位置を変える（箱の真ん中で離すと自動）`);
+    s += end("t", SE.pts[SE.pts.length - 1], `ドラッグで${SE.assoc ? "関連の相手" : "つなぎ先"}・入る辺と位置を変える（箱の真ん中で離すと自動）`);
     // 流れの矢印の途中に＋。押すと、選んだ種類のステップを矢印の間に入れる（関連の線には出さない）
     if (!SE.assoc){
       const [x, y] = edgePlusAt(SE), tip = "この矢印の間にステップを入れる（種類を選ぶ）";
@@ -625,7 +625,7 @@ function showEmpty(){
     $("#tab-edit").innerHTML = `<p class="help">作業フォルダを開くと、ここでステップを編集できます。</p>`;
     $("#tab-setup").innerHTML = `<p class="help">作業フォルダを開くと、ここで管理部署や担当（レーン）を設定できます。</p>`;
     $("#tab-check").innerHTML = ""; $("#tab-hist").innerHTML = ""; $("#yamlText").value = "";
-    $("#issueCount").textContent = "0"; $("#issueCount").className = "count"; updateIssueBtn(); updateInfoBtn();
+    $("#issueCount").textContent = "0"; $("#issueCount").className = "count"; updateIssueBtn(); updateInfoBtn(); updateTidyBtn();
     updateHint(); renderList();
     return;
   }
@@ -633,7 +633,7 @@ function showEmpty(){
   $("#tab-edit").innerHTML = `<p class="help">左の一覧または上のボタンからフローを作成すると、ここでステップを編集できます。</p>`;
   $("#tab-setup").innerHTML = `<p class="help">フローを作成すると、ここで管理部署や担当（レーン）を設定できます。</p>`;
   $("#tab-check").innerHTML = ""; $("#tab-hist").innerHTML = ""; $("#yamlText").value = "";
-  $("#issueCount").textContent = "0"; $("#issueCount").className = "count"; updateIssueBtn(); updateInfoBtn();
+  $("#issueCount").textContent = "0"; $("#issueCount").className = "count"; updateIssueBtn(); updateInfoBtn(); updateTidyBtn();
   updateHint(); renderList();
 }
 
@@ -672,8 +672,8 @@ function refresh(withForm){
   setCmp(compareOf(S.flow));
   setIssues(validate(S.flow, { base: S.cmp?.base }));
   drawCanvas();
-  updateIssueBtn(); updateInfoBtn();
-  const bad = S.issues.filter(i => i.level === "bad").length, warn = S.issues.filter(i => i.level === "warn").length;
+  updateIssueBtn(); updateInfoBtn(); updateTidyBtn();
+  const bad =S.issues.filter(i => i.level === "bad").length, warn = S.issues.filter(i => i.level === "warn").length;
   const c = $("#issueCount"); c.textContent = bad + warn; c.className = "count" + (bad ? " bad" : warn ? " warn" : "");
   if (withForm) renderForm(); else updateFlags();
   syncMemo();
@@ -710,7 +710,7 @@ function updateHint(){
   const h = $("#canvasHint"); h.hidden = !S.flow;
   // 選んでいるものに合わせて、主な操作だけを短く出す（細かい操作は README）
   h.innerHTML = S.selEdge?.rel
-    ? `両端の丸をドラッグしてつなぎ替え・<kbd>Delete</kbd> で削除`
+    ? `両端の丸をドラッグしてつなぎ替え・相手のステップから引き直すと向きが逆になる・<kbd>Delete</kbd> で削除`
     : S.selEdge
     ? `<b>＋</b> で間にステップを入れる・両端の丸をドラッグしてつなぎ替え・ダブルクリックで条件を編集・<kbd>Delete</kbd> で削除`
     : S.selected
@@ -817,7 +817,7 @@ function renderForm(){
         <div class="field"><label for="so-${esc(s.id)}">補足（帳票名・期限・ルールなど）</label><textarea class="inp" id="so-${esc(s.id)}" data-sf="note" rows="2">${esc(s.note)}</textarea></div>
         <div class="field"><label for="si-${esc(s.id)}">課題（問題点・改善したい点）</label><textarea class="inp issue-inp" id="si-${esc(s.id)}" data-sf="issue" rows="2" placeholder="例：紙の書類を目視で確認しており時間がかかる">${esc(s.issue)}</textarea></div>
 `;
-      const rel = s.related || [], free = S.flow.steps.filter(x => x.id !== s.id && !rel.includes(x.id) && !s.next.some(e => e.to === x.id));
+      const rel = s.related || [], free = S.flow.steps.filter(x => x.id !== s.id && !relates(s, x.id) && !s.next.some(e => e.to === x.id));
       // たたんでいても中身がわかるよう、見出しの右に書いてあるものを短く出す
       const peek = [hasTool(s) ? "ツールあり" : "", s.next.length ? `次 ${s.next.length}` : "", rel.length ? `関連 ${rel.length}` : ""].filter(Boolean).join("・") || "なし";
       h += `<details class="info-sec" ${infoOpen ? "open" : ""}><summary>ツール・つながり<span class="peek">${peek}</span></summary>
@@ -831,9 +831,9 @@ function renderForm(){
       if (!s.next.length) h += `<p class="help" style="margin:0">${s.type === "end" ? "終了ステップなので次はありません。" : "まだつながっていません。"}</p>`;
       h += `<div class="row"><button class="btn sm" data-act="next-add">＋ つながりを追加</button></div></div>`;
       }
-      // 関連（点線）：流れとは別に、このステップで作る・使う帳票などと結ぶ。相手だけを選ぶ（条件・辺の指定はない）
+      // 関連（点線）：流れとは別に、このステップで作る・使う帳票などと結ぶ。ここでは相手だけを選ぶ（条件はない。辺は図で端をドラッグして指定する）
       h += `<div class="field"><span class="lbl">${isArtifact(s) ? `関連（点線。この${TYPES[s.type]}を作る・使うステップ）` : "関連（点線。このステップで作る・使う帳票・データなど）"}</span>`;
-      rel.forEach((to, k) => { h += `<div class="next-row rel-row"><select class="inp" id="rx-${esc(s.id)}-${k}" data-rx="${k}" aria-label="関連の相手">${stepOpts(to, s.id)}</select><button class="mini" data-act="rel-del" data-k="${k}" aria-label="この関連を削除">✕</button></div>`; });
+      rel.forEach(({ to }, k) => { h +=`<div class="next-row rel-row"><select class="inp" id="rx-${esc(s.id)}-${k}" data-rx="${k}" aria-label="関連の相手">${stepOpts(to, s.id)}</select><button class="mini" data-act="rel-del" data-k="${k}" aria-label="この関連を削除">✕</button></div>`; });
       h += `<div class="next-row rel-row"><select class="inp" id="rx-${esc(s.id)}-new" data-rx="new" aria-label="関連を追加"><option value="">＋ 関連を追加…</option>${free.map(x => `<option value="${esc(x.id)}">${esc(x.id)}：${esc(x.label || "（未記入）")}</option>`).join("")}</select><span></span></div></div></details>
         <div class="step-actions">
           <button class="btn sm danger" data-act="step-del">削除</button>
@@ -882,7 +882,7 @@ function deleteStep(id){
     p.next.splice(k, 1, ...(s.next.length === 1 ? repl : []));
   });
   // 関連（点線）はつなぎ直さず外す
-  S.flow.steps.forEach(p => { if (p.related?.includes(s.id)) p.related = p.related.filter(x => x !== s.id); });
+  S.flow.steps.forEach(p => { if (relates(p, s.id)) p.related = p.related.filter(r => r.to !== s.id); });
   S.flow.steps.splice(S.flow.steps.indexOf(s), 1);
 }
 // AsIs と ToBe で別々に同じ ID を振らないよう、比較でつながるフローのステップ ID も避ける（familyIds）
@@ -906,10 +906,11 @@ onPanels("change", ev => {
   else if (t.dataset.sf === "lane"){ s.lane = t.value; commit({ form: true }); }
   else if (t.dataset.nf === "to"){ const e = s.next[+t.dataset.nx]; e.to = t.value; delete e.entry; delete e.entryAt; if (!t.value) s.next.splice(+t.dataset.nx, 1); commit({ form: true }); }
   else if (t.dataset.rx != null){
-    const rel = s.related ||= [], v = t.value;
-    if (t.dataset.rx === "new"){ if (v && !rel.includes(v)) rel.push(v); }
-    else if (!v || rel.some((x, k) => k !== +t.dataset.rx && x === v)) rel.splice(+t.dataset.rx, 1);
-    else rel[+t.dataset.rx] = v;
+    // 相手を変えたら、相手側の辺の指定は外す（流れのつなぎ先を変えたときと同じ）
+    const rel = s.related ||= [], v = t.value, r = rel[+t.dataset.rx];
+    if (t.dataset.rx === "new"){ if (v && !relates(s, v)) rel.push({ to: v }); }
+    else if (!v || rel.some((x, k) => k !== +t.dataset.rx && x.to === v)) rel.splice(+t.dataset.rx, 1);
+    else { r.to = v; delete r.entry; delete r.entryAt; }
     commit({ form: true });
   }
 });
@@ -968,7 +969,7 @@ onPanels("click", ev => {
       b.dataset.orig = "IDを振り直す"; if (!arm(b, "renum", "もう一度押して振り直す")) return;
       const r = S.records.get(S.currentId);
       if (r){ const history = (r.history || []).slice(); history.unshift({ at: Date.now(), name: S.flow.name, yaml: S.yamlSrc, memo: "ID振り直し前" }); setRecord(S.currentId, { ...r, history: history.slice(0, 20) }); }
-      S.flow.steps.forEach(x => { x.id = map.get(x.id); x.next.forEach(e => { if (map.has(e.to)) e.to = map.get(e.to); }); if (x.related) x.related = x.related.map(t => map.get(t) || t); });
+      S.flow.steps.forEach(x => { x.id = map.get(x.id); [...x.next, ...(x.related || [])].forEach(e => { if (map.has(e.to)) e.to = map.get(e.to); }); });
       if (S.selected) setSelected(map.get(S.selected) || null);
       toast(`IDを ${pre}1〜${pre}${S.flow.steps.length} に振り直しました（元の版は履歴に残しています）`); break;
     }
@@ -1193,6 +1194,19 @@ $("#infoBtn").onclick = () => {
   setShowInfo(!S.showInfo); lsSet("flowbook.showInfo", S.showInfo ? "1" : "");
   updateInfoBtn(); drawCanvas();
 };
+// 線を整える：矢印・関連の出入りする辺の指定をすべて外し、自動で引き直す（ステップの位置は変えない）。数は辺を指定した線の本数
+function updateTidyBtn(){
+  const b = $("#tidyBtn"), n = S.flow ? pinnedEdges(S.flow).length : 0;
+  $("#tidyBtnCount").textContent = n;
+  b.disabled = !n;
+  b.title = !n ? "線はすべて自動で引いています（出入りする辺を指定した矢印・関連はありません）" : `出入りする辺を指定した矢印・関連 ${n} 本の指定を外して、線を自動で引き直します（ステップの位置は変えません）`;
+}
+$("#tidyBtn").onclick = () => {
+  if (!S.flow) return;
+  const n = unpinEdges(S.flow); if (!n) return;
+  commit({ form: true });
+  toast(`線 ${n} 本の辺の指定を外して、引き直しました（Ctrl+Z で元に戻せます）`);
+};
 // 凡例：ふだんはたたんでおく（開け閉めはこの端末で覚えておく）。画像出力の凡例は、たたんでいても .legend の記号を読む
 function setLegendOpen(on){
   $("#legend").hidden = !on;
@@ -1347,7 +1361,7 @@ const blankStep = (id, type, lane) => ({ id, type, lane, label: "", note: "", is
 function addNext(srcId, laneId, type, sl){
   const s = S.flow.steps.find(x => x.id === srcId); if (!s) return;
   const id = newStepId(), ns = blankStep(id, type, laneId);
-  if (isArtifact(ns) || isArtifact(s)) (s.related ||= []).push(id);
+  if (isArtifact(ns) || isArtifact(s)) (s.related ||= []).push({ to: id });
   else s.next.push({ to: id, when: "" });
   S.flow.steps.splice(S.flow.steps.indexOf(s) + 1, 0, ns);
   if (sl) pinSlot(ns, sl.lane, sl, null);
@@ -1358,7 +1372,7 @@ function addNext(srcId, laneId, type, sl){
 function addPrev(dstId, laneId, type, sl){
   const t = S.flow.steps.find(x => x.id === dstId); if (!t) return;
   const id = newStepId(), ns = blankStep(id, type, laneId);
-  if (isArtifact(ns) || isArtifact(t)) ns.related.push(dstId); else ns.next.push({ to: dstId, when: "" });
+  if (isArtifact(ns) || isArtifact(t)) ns.related.push({ to: dstId }); else ns.next.push({ to: dstId, when: "" });
   S.flow.steps.splice(S.flow.steps.indexOf(t), 0, ns);
   if (sl) pinSlot(ns, sl.lane, sl, null);
   commit({ form: true, select: id }); scrollCard(id); editStepInline(id);
@@ -1441,32 +1455,27 @@ function typeMenu(anchor, types, done){
   items()[0].focus({ preventScroll: true });
   typeMn = { el, close, place };
 }
-/* 前の列へ戻る矢印は、自動の経路（下や左から回り込む）だとつないだ向きと離れて見えるので、
-   2つのステップのいちばん近い辺どうしを出る辺・入る辺に指定する（気に入らなければ端をドラッグしてつなぎ替えられる）。
-   すでにほかの矢印が出入りしている辺は避け、空いている辺の中でいちばん近いものを選ぶ（全部ふさがっていれば近さだけで選ぶ）。
-   used は、この矢印を足す前の図で矢印が出入りしている辺（ステップID + 辺）。
-   fix で辺を決めた側（ドラッグを始めた＋の辺。{ exit } か { entry }）は、ふさがっていてもその辺を使う */
-function pinNearest(e, used, fix = {}){
-  const E = layout(S.flow).edges.find(E => E.e === e); if (!E || E.kind !== "loop") return;
-  let best = Infinity;
-  for (const so of fix.exit || "TBLR") for (const ti of fix.entry || "TBLR"){
-    const [x1, y1] = portAt(E.s, E.a, so), [x2, y2] = portAt(E.t, E.b, ti);
-    const d = Math.hypot(x2 - x1, y2 - y1) + (used.has(E.s.id + so) ? 1e5 : 0) + (used.has(E.t.id + ti) ? 1e5 : 0);
-    if (d < best){ best = d; e.exit = so; e.entry = ti; }
-  }
-}
-// 図の上で矢印が出入りしている辺（ステップID + 辺）。自分へ戻る矢印は上の辺を使う
-const usedSides = L => new Set(L.edges.flatMap(E => E.kind === "self" ? [E.s.id + "T"] : [E.s.id + E.so, E.t.id + E.ti]));
-/* a から b へつなぐ。rel なら流れではなく関連（点線）で結ぶ（帳票・データとは必ず関連）。関連で結んでいた相手へ流れをつなぐと、関連は流れに置き換える */
-function connect(a, b, fix, rel){
+/* a から b へつなぐ。rel なら流れではなく関連（点線）で結ぶ（帳票・データとは必ず関連）。関連で結んでいた相手へ流れをつなぐと、関連は流れに置き換える。
+   b から a への関連があるところへ関連で結ぶと、その関連の向きを逆にする（辺の指定も入れ替え、線は同じ所に引く）。
+   出入りする辺は指定しない（図の配置に合わせて自動で選ぶ。気に入らなければ端をドラッグして指定できる） */
+function connect(a, b, rel){
   const s = S.flow.steps.find(x => x.id === a), t = S.flow.steps.find(x => x.id === b); if (!s || !t || a === b){ drawCanvas(); return; }
-  rel ||= isArtifact(s) || isArtifact(t);
-  if (s.next.some(e => e.to === b) || (rel && (s.related?.includes(b) || t.related?.includes(a)))){ toast("すでにつながっています"); drawCanvas(); return; }
-  if (rel){ (s.related ||= []).push(b); commit({ form: true }); return; }
-  if (s.related?.includes(b)) s.related = s.related.filter(x => x !== b);
-  const used = usedSides(layout(S.flow)), e = { to: b, when: "" }; s.next.push(e); pinNearest(e, used, fix); commit({ form: true });
+  rel = relLink(a, b, rel);
+  if (s.next.some(e => e.to === b) || (rel && relates(s, b))){ toast("すでにつながっています"); drawCanvas(); return; }
+  if (rel && relates(t, a)){
+    const k = t.related.findIndex(r => r.to === a), r = t.related[k], n = { to: b };
+    if (r.entry){ n.exit = r.entry; if (r.entryAt != null) n.exitAt = r.entryAt; }
+    if (r.exit){ n.entry = r.exit; if (r.exitAt != null) n.entryAt = r.exitAt; }
+    t.related.splice(k, 1); (s.related ||= []).push(n); commit({ form: true });
+    toast(`「${s.label || s.id}」から「${t.label || t.id}」への向きに変えました（Ctrl+Z で元に戻せます）`); return;
+  }
+  if (rel){ (s.related ||= []).push({ to: b }); commit({ form: true }); return; }
+  if (relates(s, b)) s.related = s.related.filter(r => r.to !== b);
+  s.next.push({ to: b, when: "" }); commit({ form: true });
   if (s.type === "decision") editEdgeInline(a, s.next.length - 1);
 }
+// a と b をつなぐと関連（点線）になるか（Shift を押してつないだ・どちらかが帳票・データ）
+const relLink = (a, b, shift) => !!shift || [a, b].some(id => isArtifact(S.flow.steps.find(x => x.id === id)));
 
 /* 選んだ矢印の端を離した先。ステップの上なら { id, side, at, pt }。
    side は箱の外寄り（中心から縦横それぞれ半分より外）にいるときの一番近い辺で、真ん中なら null（自動）。
@@ -1476,8 +1485,6 @@ function reattachAt(ev, p, d){
   const id = g.dataset.step, to = refTo(d.edge); if (to == null) return null;
   // 矢印の両端を同じステップにはしない
   if (d.reattach === "t" ? id === d.edge.sid : id === to) return null;
-  // 関連（点線）は辺を指定しない
-  if (d.edge.rel) return { id, side: null, at: null, pt: null };
   const st = S.lastL.steps.find(x => x.id === id), pos = S.lastL.pos.get(id);
   const dx = (p[0] - (pos.x + pos.w / 2)) / (pos.w / 2), dy = (p[1] - (pos.y + pos.h / 2)) / (pos.h / 2);
   if (Math.max(Math.abs(dx), Math.abs(dy)) < 0.5) return { id, side: null, at: null, pt: null };
@@ -1486,36 +1493,29 @@ function reattachAt(ev, p, d){
   const lr = side === "L" || side === "R", at = Math.round(offAt(st, side, lr ? p[1] - (pos.y + pos.h / 2) : p[0] - (pos.x + pos.w / 2)) / 5) * 5;
   return { id, side, at, pt: portAt(st, pos, side, atOff(st, side, at)) };
 }
-/* 矢印のつなぎ替え。end は動かした端（s = 出るステップ、t = つなぎ先）、side は出入りする辺（null で自動）、at は辺のどこか（null で自動） */
+/* 矢印・関連（点線）のつなぎ替え。end は動かした端（s = 出るステップ・関連元、t = つなぎ先・関連の相手）、
+   side は出入りする辺（null で自動）、at は辺のどこか（null で自動） */
 function reattach(ref, end, id, side, at){
-  if (ref.rel) return reattachRel(ref, end, id);
-  const s = S.flow.steps.find(x => x.id === ref.sid), e = s?.next[ref.k]; if (!e){ drawCanvas(); return; }
-  const pin = k => { if (side) e[k] = side; else delete e[k]; if (side && at != null) e[k + "At"] = at; else delete e[k + "At"]; };
-  const same = k => (e[k] || null) === side && (e[k + "At"] ?? null) === (side ? at : null);
-  if (end === "t"){
-    if (id === e.to){ if (same("entry")){ drawCanvas(); return; } pin("entry"); commit({ form: true, select: null, edge: ref }); return; }
-    if (s.next.some(x => x !== e && x.to === id)){ toast("すでにつながっています"); drawCanvas(); return; }
-    e.to = id; pin("entry"); commit({ form: true, select: null, edge: ref });
-    return;
+  const s = S.flow.steps.find(x => x.id === ref.sid), list = ref.rel ? s?.related : s?.next, e = list?.[ref.k]; if (!e){ drawCanvas(); return; }
+  const k = end === "t" ? "entry" : "exit";
+  const pin = () => { if (side) e[k] = side; else delete e[k]; if (side && at != null) e[k + "At"] = at; else delete e[k + "At"]; };
+  // 同じステップの上で離したら、辺の指定だけを変える
+  if (end === "t" ? id === e.to : id === s.id){
+    if ((e[k] || null) === side && (e[k + "At"] ?? null) === (side ? at : null)){ drawCanvas(); return; }
+    pin(); commit({ form: true, select: null, edge: ref }); return;
   }
-  if (id === s.id){ if (same("exit")){ drawCanvas(); return; } pin("exit"); commit({ form: true, select: null, edge: ref }); return; }
-  const ns = S.flow.steps.find(x => x.id === id); if (!ns){ drawCanvas(); return; }
-  if (ns.next.some(x => x.to === e.to)){ toast("すでにつながっています"); drawCanvas(); return; }
-  s.next.splice(ref.k, 1); pin("exit"); ns.next.push(e);
-  commit({ form: true, select: null, edge: { sid: ns.id, k: ns.next.length - 1 } });
-}
-// 関連（点線）のつなぎ替え。end = t なら相手を、s なら関連元を id に変える
-function reattachRel(ref, end, id){
-  const s = S.flow.steps.find(x => x.id === ref.sid), to = s?.related?.[ref.k]; if (to == null){ drawCanvas(); return; }
-  const [a, b] = end === "t" ? [s.id, id] : [id, to], ns = S.flow.steps.find(x => x.id === a), nt = S.flow.steps.find(x => x.id === b);
-  if (!ns || !nt || (a === s.id && b === to)){ drawCanvas(); return; }
-  if (ns.next.some(e => e.to === b) || ns.related?.includes(b) || nt.related?.includes(a)){ toast("すでにつながっています"); drawCanvas(); return; }
-  if (end === "t"){ s.related[ref.k] = id; commit({ form: true, select: null, edge: ref }); return; }
-  s.related.splice(ref.k, 1); (ns.related ||= []).push(to);
-  commit({ form: true, select: null, edge: { sid: ns.id, k: ns.related.length - 1, rel: true } });
+  const [a, b] = end === "t" ? [s.id, id] : [id, e.to], ns = S.flow.steps.find(x => x.id === a), nt = S.flow.steps.find(x => x.id === b);
+  if (!ns || !nt){ drawCanvas(); return; }
+  // 同じ向きの流れがあればつながない。関連は、向きを問わず関連があってもつながない
+  if (ns.next.some(x => x !== e && x.to === b) || ref.rel && (relates(ns, b) || relates(nt, a))){ toast("すでにつながっています"); drawCanvas(); return; }
+  pin();
+  if (end === "t"){ e.to = id; commit({ form: true, select: null, edge: ref }); return; }
+  const nl = ref.rel ? (ns.related ||= []) : ns.next;
+  list.splice(ref.k, 1); nl.push(e);
+  commit({ form: true, select: null, edge: { sid: ns.id, k: nl.length - 1, ...(ref.rel ? { rel: true } : {}) } });
 }
 
-/* ドラッグ：＋からは「つなぐ」（ステップの上で離すと接続、空いたところで離すとそこに新しいステップ。左の＋は向きが逆）。
+/* ドラッグ：＋からは「つなぐ」（ステップの上で離すと接続、空いたところで離すとそこに新しいステップ。左の＋は向きが逆。ただしステップと関連で結ぶときは、どの＋からでも引いた向き）。
    ステップ本体は左右に動かすと列が、別のレーンへ動かすと担当が変わる */
 let drag = null;
 const inCanvas = ev => { const r = $("#canvas").getBoundingClientRect(); return ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom; };
@@ -1553,12 +1553,15 @@ $("#canvas").addEventListener("pointermove", ev => {
     else if (!drag.reattach) mainSvg().insertAdjacentHTML("beforeend", `<rect class="drop-ghost" width="${G.nodeW}" height="${G.nodeH}" rx="6" visibility="hidden"/><line class="drop-line" visibility="hidden"/>`);
     if (drag.reattach) mainSvg().insertAdjacentHTML("beforeend", `<path class="link-temp" marker-end="url(#arrS)"/><circle class="side-mark" r="5" visibility="hidden"/>`);
   }
-  // 関連（点線）の線を動かす・Shift を押しながら＋からつなぐときは、仮の線も関連の見た目にする
   if (drag.link) drag.rel = ev.shiftKey;
-  const lt = mainSvg().querySelector(".link-temp"), rel = drag.reattach ? !!drag.edge.rel : drag.rel;
-  if (lt && lt.classList.contains("assoc") !== !!rel){ lt.classList.toggle("assoc", !!rel); lt.setAttribute("marker-end", `url(#${rel ? "oarS" : "arrS"})`); }
   autoScroll(ev);
   const p = toSvg(ev.clientX, ev.clientY); if (!p) return;
+  // 仮の線を a から b へ引く。関連（点線）の線を動かす・関連でつなぐときは、関連の見た目にする
+  const temp = (a, b, rel) => {
+    const lt = mainSvg().querySelector(".link-temp");
+    if (lt.classList.contains("assoc") !== rel){ lt.classList.toggle("assoc", rel); lt.setAttribute("marker-end", `url(#${rel ? "oarS" : "arrS"})`); }
+    lt.setAttribute("d", `M${a[0]} ${a[1]} L${b[0]} ${b[1]}`);
+  };
   if (drag.reattach){
     const sv = mainSvg(), hit = reattachAt(ev, p, drag), mk = sv.querySelector(".side-mark");
     sv.querySelectorAll(".link-target").forEach(n => n.classList.remove("link-target"));
@@ -1566,8 +1569,7 @@ $("#canvas").addEventListener("pointermove", ev => {
     const q = hit?.pt || p;
     mk.setAttribute("visibility", hit?.side ? "visible" : "hidden");
     if (hit?.side){ mk.setAttribute("cx", q[0]); mk.setAttribute("cy", q[1]); }
-    const [a, b] = drag.reattach === "t" ? [drag.from, q] : [q, drag.from];
-    sv.querySelector(".link-temp").setAttribute("d", `M${a[0]} ${a[1]} L${b[0]} ${b[1]}`);
+    drag.reattach === "t" ? temp(drag.from, q, !!drag.edge.rel) : temp(q, drag.from, !!drag.edge.rel);
     return;
   }
   const lane = inCanvas(ev) ? laneAt(p[1]) : null;
@@ -1575,9 +1577,9 @@ $("#canvas").addEventListener("pointermove", ev => {
     const sv = mainSvg(), tgt = targetAt(ev, drag.id), gh = sv.querySelector(".drop-ghost");
     sv.querySelectorAll(".link-target").forEach(n => n.classList.remove("link-target"));
     if (tgt) nodeEl(tgt).classList.add("link-target");
-    // 左の＋（前のステップ）からは、離した先から選択中のステップへ向かう矢印
-    const [a, b] = drag.side === "L" ? [p, drag.from] : [drag.from, p];
-    sv.querySelector(".link-temp").setAttribute("d", `M${a[0]} ${a[1]} L${b[0]} ${b[1]}`);
+    // 左の＋（前のステップ）からは、離した先から選択中のステップへ向かう矢印。ステップと関連で結ぶときは、どの＋からでも選択中のステップから
+    const rel = relLink(drag.id, tgt || drag.id, drag.rel);
+    drag.side === "L" && !(tgt && rel) ? temp(p, drag.from, rel) : temp(drag.from, p, rel);
     const sl = !tgt && lane ? slotAt(p[1]) : null;
     showSlot(sl, p[0] - G.nodeW / 2);
     showLaneHi(sl ? lane : null);
@@ -1601,10 +1603,10 @@ function endDrag(ev, cancel){
   if (d.link){
     const tgt = p && targetAt(ev, d.id);
     const prev = d.side === "L", rel = !!p && ev.shiftKey;
-    // 前の列へ戻るときは、ドラッグを始めた＋の辺から線を出す（左の＋は選択中のステップの左の辺へ入れる）。
-    // 空いた所で離すと、種類を選ぶメニューを出してそこに置く。
+    // ステップの上で離すとつなぐ（左の＋は、離した先から選択中のステップへ。ただし関連で結ぶときは、どの＋からでも選択中のステップから離した先へ。
+    // 逆向きの関連があれば向きを変える）。空いた所で離すと、種類を選ぶメニューを出してそこに置く。
     // Shift を押しながら離すと関連（点線）で結ぶ（空いた所なら、メニューを出さずに関連で結んだ帳票を作る）
-    if (tgt) prev ? connect(tgt, d.id, { entry: "L" }, rel) : connect(d.id, tgt, { exit: d.side }, rel);
+    if (tgt) prev && !relLink(d.id, tgt, rel) ? connect(tgt, d.id, rel) : connect(d.id, tgt, rel);
     else if (lane){
       const sl = slotAt(p[1]), s = S.flow.steps.find(x => x.id === d.id), add = type => prev ? addPrev(d.id, lane.id, type, sl) : addNext(d.id, lane.id, type, sl);
       drawCanvas();
@@ -2109,7 +2111,7 @@ function mermaid(f){
   f.steps.filter(s => !f.lanes.some(l => l.id === s.lane)).forEach(s => out += `  ${nid(s.id)}${shape(s)}\n`);
   f.steps.forEach(s => s.next.forEach(e => out += `  ${nid(s.id)} -->${e.when ? `|${q(e.when)}|` : ""} ${nid(e.to)}\n`));
   // 関連は点線の矢印
-  f.steps.forEach(s => (s.related || []).forEach(to => { if (to !== s.id && !s.next.some(e => e.to === to)) out += `  ${nid(s.id)} -.-> ${nid(to)}\n`; }));
+  f.steps.forEach(s => (s.related || []).forEach(({ to }) => { if (to !== s.id && !s.next.some(e => e.to === to)) out += `  ${nid(s.id)} -.-> ${nid(to)}\n`; }));
   return out;
 }
 function markdown(f){
@@ -2121,7 +2123,7 @@ function markdown(f){
   if (f.description) md += `${f.description}\n\n`;
   // 関連（点線）・使用システム・ツール・手段は、書いたステップがあるときだけ列を足す
   const cols = [["ID", s => s.id], ["種類", s => TYPES[s.type]], ["担当", s => laneName(s.lane)], ["内容", s => s.label], ["次へ", s => s.next.map(e => e.to + (e.when ? `（${e.when}）` : "")).join("、")]];
-  if (f.steps.some(s => s.related?.length)) cols.push(["関連", s => (s.related || []).join("、")]);
+  if (f.steps.some(s => s.related?.length)) cols.push(["関連", s => (s.related || []).map(r => r.to).join("、")]);
   if (f.steps.some(hasTool)) cols.push([TOOL_NAME, s => s.tool]);
   cols.push(["補足", s => s.note], ["課題", s => s.issue]);
   md += "## フロー図\n\n```mermaid\n" + mermaid(f) + "```\n\n## 手順一覧\n\n" + `| ${cols.map(([h]) => h).join(" | ")} |\n|${cols.map(() => "---|").join("")}\n`;
@@ -2225,8 +2227,8 @@ const IMG_SIZES = {
   "16:7": { w: 12.333, ar: 7 / 16 },
   fit: { w: 0, ar: 0 },
 };
-// px：画像の横のピクセル数（fit 以外）。m：外の余白、th：見出しの高さ、cw：結合子を置く帯の幅、r：結合子の半径、gapMin：結合子どうしの縦の間隔
-const IMG = { px: 1920, m: 16, th: 30, cw: 50, r: 9, gapMin: 34, fitPx: 2, maxPx: 12000 };
+// px：画像の横のピクセル数（fit 以外。4K の幅で、13.333 インチに貼ると約 288dpi）。fitPx：fit のときの 1 図 px あたりのピクセル数。m：外の余白、th：見出しの高さ、cw：結合子を置く帯の幅、r：結合子の半径、gapMin：結合子どうしの縦の間隔
+const IMG = { px: 3840, m: 16, th: 30, cw: 50, r: 9, gapMin: 34, fitPx: 4, maxPx: 12000 };
 // 画像の中ではページの Web フォントを使えないため、端末にあるフォントを並べる（Windows では游ゴシック UI）。
 // 文字の幅を測るときも同じフォントになるよう、Web フォント（IBM Plex Sans JP）は入れない
 const FONT_EXPORT = "'Yu Gothic UI','Meiryo','Hiragino Sans',sans-serif";

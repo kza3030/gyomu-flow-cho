@@ -4,7 +4,7 @@
    core/ のファイルは画面（DOM）に触らない。Node のテスト（tests/）からも読み込む */
 (() => {
 "use strict";
-const { newFlowId, isArtifact, colorable } = globalThis.Flowbook; // model.js
+const { newFlowId, isArtifact, colorable, relates } = globalThis.Flowbook; // model.js
 
 /* 比べる項目。位置（col・row）・色・辺の指定は見た目なので比べない */
 const DIFF_FIELDS = { label: "内容", type: "種類", tool: "ツール", note: "補足", issue: "課題" };
@@ -46,7 +46,7 @@ function diffFlows(base, target){
   const tEdges = new Map(), tIndex = new Map(), tRel = new Map(), tRelIndex = new Map();
   target.steps.forEach(s => {
     s.next.forEach(e => { const k = ekey(s.id, e.to); tEdges.set(k, e); keysOf(s.id).forEach(a => keysOf(e.to).forEach(b => { if (!tIndex.has(ekey(a, b))) tIndex.set(ekey(a, b), [k, e]); })); });
-    (s.related || []).forEach(to => { const k = rkey(s.id, to); tRel.set(k, true); keysOf(s.id).forEach(a => keysOf(to).forEach(b => tRelIndex.set(rkey(a, b), k))); });
+    (s.related || []).forEach(({ to }) => { const k = rkey(s.id, to); tRel.set(k, true); keysOf(s.id).forEach(a => keysOf(to).forEach(b => tRelIndex.set(rkey(a, b), k))); });
   });
   const edges = { base: new Map(), target: new Map() };
   const merged = (a, b) => usedAsSrc.has(a) && usedAsSrc.get(a) === usedAsSrc.get(b);
@@ -59,7 +59,7 @@ function diffFlows(base, target){
       if (!edges.target.has(tk) || st === "chg") edges.target.set(tk, st);
       if (st === "chg") steps.get(tk.split(">")[0])?.branch.push([e.when || "", te.when || "", te.to]);
     });
-    (s.related || []).forEach(to => { const k = rkey(s.id, to), tk = tRelIndex.get(k); edges.base.set(k, tk ? "same" : "del"); if (tk) edges.target.set(tk, "same"); });
+    (s.related || []).forEach(({ to }) => { const k = rkey(s.id, to), tk = tRelIndex.get(k); edges.base.set(k, tk ? "same" : "del"); if (tk) edges.target.set(tk, "same"); });
   });
   tEdges.forEach((e, k) => { if (!edges.target.has(k)) edges.target.set(k, "add"); });
   tRel.forEach((_, k) => { if (!edges.target.has(k)) edges.target.set(k, "add"); });
@@ -145,7 +145,7 @@ function updatesSince(tobe, current){
   });
   // 矢印・関連
   const edges = [];
-  const nextOf = (by, id) => by.get(id)?.next || [], relOf = (by, id) => by.get(id)?.related || [];
+  const nextOf = (by, id) => by.get(id)?.next || [], relOf = (by, id) => (by.get(id)?.related || []).map(r => r.to);
   const ids = new Set([...sBy.keys(), ...cBy.keys()]);
   ids.forEach(id => {
     const sn = nextOf(sBy, id), cn = nextOf(cBy, id);
@@ -212,8 +212,8 @@ function resolveUpdate(tobe, current, item, how, now){
     if (!s || !b || onTobe && it.type.startsWith("add") && !stepOf(F, b)) return;
     if (it.type === "addEdge"){ if (!s.next.some(e => e.to === b)) s.next.splice(nextAt(s, it), 0, { ...clone(it.edge), to: b }); }
     else if (it.type === "delEdge") s.next = s.next.filter(e => e.to !== b);
-    else if (it.type === "addRel"){ s.related ||= []; if (!s.related.includes(b)) s.related.push(b); }
-    else if (it.type === "delRel") s.related = (s.related || []).filter(to => to !== b);
+    else if (it.type === "addRel"){ if (!relates(s, b)) (s.related ||= []).push({ to: b }); }
+    else if (it.type === "delRel") s.related = (s.related || []).filter(r => r.to !== b);
   };
   // 足すステップは、比較元で前にあるステップのうち F にもある最後のものの後ろに置く
   const placeAt = F => {
@@ -239,7 +239,7 @@ function resolveUpdate(tobe, current, item, how, now){
         break;
       case "delStep":
         F.steps = F.steps.filter(s => s.id !== item.id);
-        F.steps.forEach(s => { s.next = s.next.filter(e => e.to !== item.id); s.related = (s.related || []).filter(to => to !== item.id); });
+        F.steps.forEach(s => { s.next = s.next.filter(e => e.to !== item.id); s.related = (s.related || []).filter(r => r.to !== item.id); });
         item.edges.forEach(e => edgeChange(F, e, onTobe));
         break;
       default: edgeChange(F, item, onTobe);

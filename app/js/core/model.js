@@ -29,24 +29,40 @@ const sideOut = c => Object.keys(SIDES).find(k => SIDES[k] === c);
 /* 辺のどこから出る（exitAt）・どこへ入る（entryAt）か。辺の端から端を 0〜100 で表す（上下の辺は左端が 0、左右の辺は上端が 0。50 が真ん中）。
    辺を指定したとき（exit・entry）だけ書ける。省くと、同じ辺に出入りするほかの矢印と並べて自動で決める */
 const atIn = v => { const n = parseFloat(v); return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : null; };
+// 辺の指定（exit・exitAt・entry・entryAt）を x から読んで e に足す（流れと関連で共通）
+function sidesIn(e, x){
+  const ex = sideIn(x.exit), en = sideIn(x.entry);
+  if (ex){ e.exit = ex; const a = atIn(x.exitAt); if (a != null) e.exitAt = a; }
+  if (en){ e.entry = en; const a = atIn(x.entryAt); if (a != null) e.entryAt = a; }
+  return e;
+}
+// 辺の指定を、書き出す形（英語の辺の名前）で o に足す
+function sidesOut(o, e){
+  if (e.exit) o.exit = sideOut(e.exit);
+  if (e.exit && e.exitAt != null) o.exitAt = e.exitAt;
+  if (e.entry) o.entry = sideOut(e.entry);
+  if (e.entry && e.entryAt != null) o.entryAt = e.entryAt;
+  return o;
+}
 function normNext(n){
   if (n == null || n === "") return [];
   if (!Array.isArray(n)) n = [n];
   return n.map(x => {
     if (!x || typeof x !== "object") return { to: String(x), when: "" };
-    const e = { to: String(x.to ?? ""), when: x.when != null ? String(x.when) : "" }, ex = sideIn(x.exit), en = sideIn(x.entry);
-    if (ex){ e.exit = ex; const a = atIn(x.exitAt); if (a != null) e.exitAt = a; }
-    if (en){ e.entry = en; const a = atIn(x.entryAt); if (a != null) e.entryAt = a; }
-    return e;
+    return sidesIn({ to: String(x.to ?? ""), when: x.when != null ? String(x.when) : "" }, x);
   }).filter(e => e.to);
 }
-/* related：関連（点線）。BPMN の関連のように、ステップと、そこで作る帳票などの中間成果物を結ぶ。流れ（next）とは別に、相手の id だけを並べる。
-   文字列・並び・{ to: … } のどれでも書ける。空と重複は捨てる */
+/* related：関連（点線）。BPMN の関連のように、ステップと、そこで作る帳票などの中間成果物を結ぶ。流れ（next）とは別に並べる。
+   1 件は { to: 相手の id }。流れと同じく、出入りする辺（exit・exitAt・entry・entryAt）を書ける（省くと自動）。
+   相手の id だけ・並び・{ to: … } のどれでも書ける。空と重複は捨てる */
 function normRelated(r){
   if (r == null || r === "") return [];
-  const ids = (Array.isArray(r) ? r : [r]).map(x => String(x && typeof x === "object" ? x.to ?? "" : x)).filter(Boolean);
-  return [...new Set(ids)];
+  const seen = new Set();
+  return (Array.isArray(r) ? r : [r]).map(x => x && typeof x === "object" ? sidesIn({ to: String(x.to ?? "") }, x) : { to: String(x ?? "") })
+    .filter(e => e.to && !seen.has(e.to) && seen.add(e.to));
 }
+// s から id へ関連で結んでいるか
+const relates = (s, id) => !!s?.related?.some(r => r.to === id);
 // 帳票・データ・データストア（中間成果物）。ほかのステップとは、流れではなく必ず関連（点線）で結ぶ
 const ARTIFACT = new Set(["document", "dataObject", "dataStore"]);
 const isArtifact = s => !!s && ARTIFACT.has(s.type);
@@ -60,7 +76,7 @@ function artifactLinks(f){
     const rel = s.related ||= [];
     s.next = s.next.filter(e => {
       if (!art.has(s.id) && !art.has(e.to)) return true;
-      if (!rel.includes(e.to)) rel.push(e.to);
+      if (!relates(s, e.to)) rel.push({ to: e.to });
       moved = true; return false;
     });
   });
@@ -86,10 +102,19 @@ function toArtifact(f, id, type){
       if (out.entryAt != null) e.entryAt = out.entryAt; else delete e.entryAt;
       return true;
     });
-    if (!(p.related ||= []).includes(x.id) && !(x.related || []).includes(p.id)) p.related.push(x.id);
+    if (!relates(p, x.id) && !relates(x, p.id)) (p.related ||= []).push({ to: x.id });
   });
   x.next = [];
   return true;
+}
+// 出入りする辺を指定した（exit・entry のある）流れと関連
+const pinnedEdges = f => f.steps.flatMap(s => [...s.next, ...(s.related || [])].filter(e => e.exit || e.entry));
+/* 線を整える：流れと関連の辺の指定（exit・exitAt・entry・entryAt）をすべて外し、図の配置に合わせて自動で引き直させる。
+   ステップの位置（col・row）は変えない。外した本数を返す */
+function unpinEdges(f){
+  const es = pinnedEdges(f);
+  es.forEach(e => { delete e.exit; delete e.exitAt; delete e.entry; delete e.entryAt; });
+  return es.length;
 }
 /* AsIs／ToBe の比較。変更の種類（change.kind）：ECRS（廃止・統合・入替・簡素化）と、自動化・システム化・移管・その他。
    [YAML のキー]: 画面の名前。色と同じく日本語の名前でも書ける。知らない種類は「その他」として読む */
@@ -119,7 +144,7 @@ function normStep(s, i){
   // row: レーンの中で上から何段目に置くか（1 始まり。中身のない段は詰めて描く）。省くと自動で決める
   if (Number.isInteger(+s.row) && +s.row >= 1) st.row = +s.row;
   // from：ToBe のステップが、比較元（AsIs）のどのステップにあたるか。ID が同じなら書かなくてよい（統合・分割・置き換えのときに書く）
-  const from = normRelated(s.from); if (from.length) st.from = from;
+  const from = normRelated(s.from).map(r => r.to); if (from.length) st.from = from;
   const ch = changeIn(s.change); if (ch) st.change = ch;
   return st;
 }
@@ -194,17 +219,12 @@ function stepsPlain(steps){
     if (s.tool) r.tool = s.tool;
     if (s.next.length){
       if (s.next.every(e => !e.when && !e.exit && !e.entry)) r.next = s.next.length === 1 ? s.next[0].to : s.next.map(e => e.to);
-      else r.next = s.next.map(e => {
-        const o = { to: e.to };
-        if (e.when) o.when = e.when;
-        if (e.exit) o.exit = sideOut(e.exit);
-        if (e.exit && e.exitAt != null) o.exitAt = e.exitAt;
-        if (e.entry) o.entry = sideOut(e.entry);
-        if (e.entry && e.entryAt != null) o.entryAt = e.entryAt;
-        return o;
-      });
+      else r.next = s.next.map(e => sidesOut(e.when ? { to: e.to, when: e.when } : { to: e.to }, e));
     }
-    if (s.related?.length) r.related = s.related.length === 1 ? s.related[0] : s.related.slice();
+    if (s.related?.length){
+      if (s.related.every(e => !e.exit && !e.entry)) r.related = s.related.length === 1 ? s.related[0].to : s.related.map(e => e.to);
+      else r.related = s.related.map(e => sidesOut({ to: e.to }, e));
+    }
     if (s.from?.length) r.from = s.from.length === 1 ? s.from[0] : s.from.slice();
     if (s.change) r.change = changeOut(s.change);
     return r;
@@ -215,5 +235,5 @@ function parseYaml(text){ return normalize(jsyaml.load(text)); }
 
 function uid(prefix, taken){ let n = 1; while (taken.has(prefix + n)) n++; return prefix + n; }
 
-Object.assign(globalThis.Flowbook ??= {}, { TYPES, typeIn, KINDS, kindIn, newFlowId, TOOL_NAME, hasTool, COLORS, colorIn, colorable, SIDES, SIDE_NAME, sideIn, sideOut, atIn, normNext, normRelated, ARTIFACT, isArtifact, artifactLinks, toArtifact, normalize, toPlain, toYaml, parseYaml, uid });
+Object.assign(globalThis.Flowbook ??= {}, { TYPES, typeIn, KINDS, kindIn, newFlowId, TOOL_NAME, hasTool, COLORS, colorIn, colorable, SIDES, SIDE_NAME, sideIn, sideOut, atIn, normNext, normRelated, relates, ARTIFACT, isArtifact, artifactLinks, toArtifact, pinnedEdges, unpinEdges, normalize, toPlain, toYaml, parseYaml, uid });
 })();
