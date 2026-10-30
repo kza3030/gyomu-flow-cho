@@ -85,7 +85,7 @@ body.resizing{cursor:col-resize;user-select:none}
 .side-head{padding:14px 16px 8px;display:flex;align-items:center;justify-content:space-between;gap:8px}
 .eyebrow{font-size:11px;letter-spacing:.12em;color:var(--muted);font-weight:600}
 .flow-list{list-style:none;margin:0;padding:0 8px 8px;overflow:auto;flex:1}
-/* 1 行：名前（入りきらなければ「…」）と、右に札（AsIs／ToBe）。右のステップ一覧（.step-sum）の、名前と担当の並べ方にそろえる */
+/* 1 行：名前（入りきらなければ「…」）と、右に札（AsIs／ToBe）。右の選んだステップの見出し（.step-sum）の、名前と担当の並べ方にそろえる */
 .flow-list button{width:100%;text-align:left;border:0;background:transparent;border-radius:8px;padding:7px 10px;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px}
 .flow-list button:hover{background:var(--lane-a)}
 .flow-list button[aria-current="true"]{background:var(--accent-soft)}
@@ -199,6 +199,7 @@ body.resizing-row{cursor:row-resize;user-select:none}
 .type-menu button{border:0;background:transparent;color:var(--ink);font:inherit;font-size:13px;text-align:left;padding:5px 10px 5px 7px;border-radius:6px;display:flex;align-items:center;gap:8px;cursor:pointer}
 .type-menu button:hover,.type-menu button:focus{background:var(--accent-soft);outline:none}
 .type-menu hr{border:0;border-top:1px solid var(--line);margin:3px 2px}
+.type-menu .tm-head{margin:3px 8px 4px;font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--muted)}
 .canvas-hint{flex-basis:100%;margin:0;font-size:11.5px;color:var(--muted);line-height:1.5}
 .canvas-hint kbd{font-family:var(--f-mono);font-size:10.5px;border:1px solid var(--line-strong);border-radius:3px;padding:0 3px;background:var(--surface)}
 
@@ -234,28 +235,27 @@ textarea.inp{resize:vertical;min-height:54px}
 .tag{font-family:var(--f-mono);font-size:11px;color:var(--muted);background:var(--lane-a);border-radius:4px;padding:0 5px}
 
 .step{border:1px solid var(--line);border-radius:8px;background:var(--surface)}
-.step-sum{width:100%;border:0;background:transparent;text-align:left;padding:7px 10px;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:center;border-radius:8px}
-.step-sum:hover{background:var(--lane-b)}
-.step-tools{display:flex;gap:6px;flex-wrap:wrap;align-items:center;justify-content:flex-end}
-.step-sum .lb{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.step-sum .ln{font-size:11.5px;color:var(--muted);white-space:nowrap}
+.step-sum{padding:7px 10px;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:center}
+.step-sum .lb,.find-list .lb{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.step-sum .ln,.find-list .ln{font-size:11.5px;color:var(--muted);white-space:nowrap}
+/* 「ステップを探す」欄。候補は欄の下に重ねて出す（1 行の並べ方は .step-sum と同じ） */
+.find{position:relative}
+.find-list{position:absolute;z-index:5;left:0;right:0;top:calc(100% + 4px);margin:0;padding:4px;list-style:none;background:var(--surface);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);max-height:min(360px,60vh);overflow:auto}
+.find-list li{padding:6px 8px;border-radius:6px;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:center;cursor:pointer}
+.find-list li:hover{background:var(--lane-b)}
+.find-list li[aria-selected="true"]{background:var(--accent-soft)}
+.find-list li.none{display:block;cursor:default;color:var(--muted)}
+.find-list li.none:hover{background:transparent}
 .step.open{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 .step-body{padding:4px 10px 12px;display:grid;gap:10px}
 .ticon{width:22px;height:16px;flex:none}
 .inp.cut{border-color:var(--warn)}
-.next-row{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) auto;gap:6px;align-items:center}
-.next-row.rel-row{grid-template-columns:minmax(0,1fr) auto}
 .step-actions{display:flex;gap:6px;flex-wrap:wrap}
 .flag{width:7px;height:7px;border-radius:50%;display:inline-block}
 .flag.bad{background:var(--bad)} .flag.warn{background:var(--warn)}
 /* 課題のしるし（チェックの丸い警告と見分けられるよう、角丸の四角に「!」） */
 .imark{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:3px;background:var(--bad);color:var(--surface);font-size:10px;font-weight:700;line-height:1;vertical-align:1px}
 textarea.inp.issue-inp{border-left:3px solid var(--bad)}
-/* 入出力・システムの欄（たたみ込み） */
-.info-sec{border:1px solid var(--line);border-radius:8px;padding:6px 10px}
-.info-sec[open]{display:grid;gap:8px;padding-bottom:10px}
-.info-sec summary{cursor:pointer;font-size:11.5px;color:var(--muted);font-weight:500}
-.info-sec summary .peek{margin-left:8px;font-weight:400;opacity:.8}
 /* 色の見本。選んでいる色は枠を太くする */
 .swatches{display:flex;flex-wrap:wrap;gap:6px}
 .swatch{min-width:26px;height:24px;padding:0 6px;border:1px solid var(--line-strong);border-radius:6px;background:var(--surface);color:var(--muted);font:inherit;font-size:11px;cursor:pointer}
@@ -277,6 +277,8 @@ textarea.inp.info-inp{resize:vertical;min-height:0}
 .issue.bad{border-left-color:var(--bad)} .issue.warn{border-left-color:var(--warn)}
 .issue .lv{font-size:11px;font-weight:600;letter-spacing:.06em;padding-top:2px}
 .issue.bad .lv{color:var(--bad)} .issue.warn .lv{color:var(--warn)} .issue.info .lv{color:var(--info)}
+/* 図に描けないつながりの問題は、右に「外す」ボタンを並べる */
+.issues .has-drop{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center}
 .ok-box{border:1px solid color-mix(in srgb,var(--good) 40%,transparent);color:var(--good);border-radius:8px;padding:12px;font-weight:500}
 
 .hist{list-style:none;margin:0;padding:0;display:grid;gap:6px}

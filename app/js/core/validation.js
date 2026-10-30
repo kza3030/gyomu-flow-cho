@@ -3,9 +3,11 @@
 (() => {
 "use strict";
 const { isArtifact } = globalThis.Flowbook; // model.js
-/* ctx.base：比較元（AsIs）の今の版。渡すと、写しの後に ToBe と比較元の両方で別々に足した同じ ID を知らせる */
+/* ctx.base：比較元（AsIs）の今の版。渡すと、写しの後に ToBe と比較元の両方で別々に足した同じ ID を知らせる。
+   図に描けないつながり（ないステップへの次・関連、自分自身への関連）には drop: { kind: "next" | "related", to } を付ける
+   （チェックタブから外せるように。図の上では選べないため） */
 function validate(f, ctx = {}){
-  const out = [], push = (level, msg, step) => out.push({ level, msg, step });
+  const out = [], push = (level, msg, step, more) => out.push({ level, msg, step, ...more });
   const ids = new Map(); f.steps.forEach(s => ids.set(s.id, (ids.get(s.id) || 0) + 1));
   const laneIds = new Map(); f.lanes.forEach(l => laneIds.set(l.id, (laneIds.get(l.id) || 0) + 1));
   laneIds.forEach((c, id) => { if (c > 1) push("bad", `担当ID「${id}」が重複しています。`); });
@@ -18,10 +20,10 @@ function validate(f, ctx = {}){
     const nm = s.label || s.id;
     if (!s.label.trim()) push("warn", `「${s.id}」に内容が書かれていません。`, s.id);
     if (!laneIds.has(s.lane)) push("bad", `「${nm}」の担当「${s.lane || "未設定"}」が担当一覧にありません。`, s.id);
-    s.next.forEach(e => { if (!ids.has(e.to)) push("bad", `「${nm}」の次「${e.to}」というステップはありません。`, s.id); });
+    s.next.forEach(e => { if (!ids.has(e.to)) push("bad", `「${nm}」の次「${e.to}」というステップはありません。`, s.id, { drop: { kind: "next", to: e.to } }); });
     (s.related || []).forEach(({ to }) => {
-      if (!ids.has(to)) push("bad", `「${nm}」の関連「${to}」というステップはありません。`, s.id);
-      else if (to === s.id) push("info", `「${nm}」の関連に自分自身が入っています。`, s.id);
+      if (!ids.has(to)) push("bad", `「${nm}」の関連「${to}」というステップはありません。`, s.id, { drop: { kind: "related", to } });
+      else if (to === s.id) push("info", `「${nm}」の関連に自分自身が入っています。`, s.id, { drop: { kind: "related", to } });
     });
     // 帳票・データは流れに入らない（関連で結ぶだけ）ので、次がなくても行き止まりとしない
     if (s.type !== "end" && !isArtifact(s) && !s.next.length) push("info", `「${nm}」の次のステップが決まっていません（行き止まり）。`, s.id);
