@@ -7,7 +7,7 @@ const {
   TYPES, TOOL_NAME, hasTool, COLORS, colorable, SIDES, sideIn, sideOut, normNext, relates, isArtifact, artifactLinks, toArtifact, pinnedEdges, unpinEdges, normalize, toYaml, parseYaml, uid, KINDS, newFlowId,
   validate,
   DIFF_FIELDS, UPDATE_FIELDS, diffFlows, updatesSince, resolveUpdate, makeToBe, toBeName, setBase, familyIds,
-  G, LB, CO, DB_RY, textW, edgeLabel, labelCut, linkedIds, layout, calloutPlan, topY, atOff, offAt, portAt, placeLabel, wrapText, wrapLabel
+  G, LB, CO, DB_RY, textW, edgeLabel, labelCut, layout, keepPlaces, autoLayout, backLinks, colPairs, alignGaps, ghostSpots, calloutPlan, topY, atOff, offAt, portAt, placeLabel, wrapText, wrapLabel
 } = Flowbook; // js/core/ の各ファイルで定義
 // 共有の状態（js/state.js）。読むのは S.〇〇、変えるのは下の関数だけ（S.〇〇 = … はエラーになる）
 const {
@@ -42,10 +42,11 @@ const idbSet = (k, v) => idb("readwrite", s => s.put(v, k));
 // 配置の計算（layout など）は js/core/layout.js
 const CUT_TIP = "長いため図では省略されます（全文は矢印のラベルにマウスを乗せると表示）";
 const markCut = el => { const c = labelCut(el.value); el.classList.toggle("cut", c); el.title = c ? CUT_TIP : ""; };
-// 図に描く配置。「課題を表示」中（issues）は、吹き出しなしでいったん配置して吹き出しの置き方を決め、その分レーンを広げて配置し直す
-function diagramLayout(f, issues = S.showIssues){
-  const L = layout(f);
-  return issues && f.steps.some(s => s.issue && s.issue.trim()) ? layout(f, calloutPlan(L)) : L;
+// 図に描く配置。「課題を表示」中（issues）は、吹き出しなしでいったん配置して吹き出しの置き方を決め、その分レーンを広げて配置し直す。
+// extra は列のすき間に足す幅（layout の extra。AsIs と上下に並べるときに列をそろえる）
+function diagramLayout(f, issues = S.showIssues, extra){
+  const L = layout(f, null, false, extra);
+  return issues && f.steps.some(s => s.issue && s.issue.trim()) ? layout(f, calloutPlan(L), false, extra) : L;
 }
 // 折れ線の角を少し丸める。曲がり角と、線どうしがつながって見える所とを見分けやすくする
 function pathD(pts, r = 5){
@@ -191,6 +192,13 @@ function diagramBodySvg(f, L, W, H, o){
     s += `<path class="ehit" data-edge="${esc(E.s.id)}" data-k="${edgeKey(E)}" d="${pathD(E.pts)}"><title>${esc(tip)}</title></path>`;
   });
   let tags = ""; // 差分の札（課題の吹き出しより後に描く）
+  // 削除したステップの跡（比較中の ToBe の図。ghostSpots）：AsIs の図の削除と同じ赤い点線の枠と札で、中身は薄く描く。押すと比較タブのその項目を開く
+  (o.ghosts || []).forEach(gh => {
+    const p = { x: gh.x, y: gh.y, w: G.nodeW, h: G.nodeH }, st = gh.step, lines = wrapLabel(st.label || "（未記入）", st.type === "decision" ? 7 : 9, 2);
+    s += `<g class="node ghost" data-ref="${esc(gh.id)}" aria-label="${esc("削除したステップ：" + (st.label || st.id))}">${diffMarkSvg("del", p, st.type)}<g opacity=".35">${shapeSvg(st.type, p.x, p.y, p.w, p.h, "")}`
+      + lines.map((t, k) => `<text x="${p.x + p.w / 2}" y="${p.y + p.h / 2 - (lines.length - 1) * 8 + k * 16}" text-anchor="middle" dominant-baseline="middle" font-size="12.5" fill="${st.type === "start" || st.type === "end" ? "var(--paper)" : "var(--ink)"}">${esc(t)}</text>`).join("") + `</g></g>`;
+    tags += diffTagSvg("del", false, p, st.type, null);
+  });
   L.steps.forEach(st => {
     const p = L.pos.get(st.id), sel = st.id === selected;
     const onDark = st.type === "start" || st.type === "end";
@@ -274,11 +282,17 @@ function diagramBodySvg(f, L, W, H, o){
   }
   return s + pops;
 }
-function renderSvg(f, issues, selected, selEdge){
-  const L = diagramLayout(f);
+// L は配置（並べたときに列をそろえたもの。なければここで配置する）
+function renderSvg(f, issues, selected, selEdge, L = diagramLayout(f)){
   const issueBy = new Map(); issues.forEach(i => { if (i.step && (!issueBy.has(i.step) || i.level === "bad")) issueBy.set(i.step, i.level); });
   setLastL(L);
-  return diagramHtml("diagram", f, L, true, { ui: { selected, selEdge, issueBy }, info: S.showInfo, diff: cmpOn() ? diffOpt(S.cmp.d, "tobe") : null });
+  return diagramHtml("diagram", f, L, true, { ui: { selected, selEdge, issueBy }, info: S.showInfo, diff: cmpOn() ? diffOpt(S.cmp.d, "tobe") : null, ghosts: cmpOn() ? ghostsOf(L) : null });
+}
+// 比較中の ToBe の図 L に描く、削除したステップの跡（比較元の写しで置いていたマスに対応するマスが空いているもの）
+function ghostsOf(L){
+  const ids = S.cmp.d.removed.map(s => s.id); if (!ids.length) return [];
+  const sn = S.flow.compare.snapshot, A = layout({ lanes: sn.lanes, steps: sn.steps }, null, true);
+  return ghostSpots(A, L, colPairs(A, L, tobeOf), ids);
 }
 // レーン名の列は別のSVGにして左端に固定（横スクロールしても見えるように）。図本体は label 以降だけを描く
 function diagramHtml(cls, f, L, ui, o){
@@ -649,7 +663,7 @@ function showEmpty(){
     $("#tab-edit").innerHTML = `<p class="help">作業フォルダを開くと、ここでステップを編集できます。</p>`;
     $("#tab-setup").innerHTML = `<p class="help">作業フォルダを開くと、ここで管理部署や担当（レーン）を設定できます。</p>`;
     $("#tab-check").innerHTML = ""; $("#tab-hist").innerHTML = ""; $("#yamlText").value = "";
-    $("#issueCount").textContent = "0"; $("#issueCount").className = "count"; updateIssueBtn(); updateInfoBtn(); updateTidyBtn();
+    $("#issueCount").textContent = "0"; $("#issueCount").className = "count"; updateIssueBtn(); updateInfoBtn(); updateTidyBtn(); updateArrangeBtn();
     updateHint(); renderList();
     return;
   }
@@ -657,7 +671,7 @@ function showEmpty(){
   $("#tab-edit").innerHTML = `<p class="help">左の一覧または上のボタンからフローを作成すると、ここでステップを編集できます。</p>`;
   $("#tab-setup").innerHTML = `<p class="help">フローを作成すると、ここで管理部署や担当（レーン）を設定できます。</p>`;
   $("#tab-check").innerHTML = ""; $("#tab-hist").innerHTML = ""; $("#yamlText").value = "";
-  $("#issueCount").textContent = "0"; $("#issueCount").className = "count"; updateIssueBtn(); updateInfoBtn(); updateTidyBtn();
+  $("#issueCount").textContent = "0"; $("#issueCount").className = "count"; updateIssueBtn(); updateInfoBtn(); updateTidyBtn(); updateArrangeBtn();
   updateHint(); renderList();
 }
 
@@ -669,7 +683,9 @@ function commit(opts = {}){
   if (S.broken){ open(S.currentId, true); toast("YAML タブで読み取れない箇所を直してから編集してください"); return; }
   // 帳票・データとの流れ（種類を帳票に変えた・つなぎ先に帳票を選んだなど）は、関連（点線）に移す
   if (artifactLinks(S.flow)) toast("帳票・データとのつながりは、関連（点線）にしました");
-  keepUnlinked();
+  // 図の位置を覚える：つなぎ方を変えても、ステップは今の図の位置に留める（足した・消したときだけ列を差し込む・詰める）
+  const L0 = S.lastL;
+  keepPlaces(S.flow, L0?.pos);
   const text = toYaml(S.flow);
   if (text !== S.yamlSrc) pushUndo(opts.form ? "op" : "type");
   setYamlSrc(text);
@@ -677,26 +693,17 @@ function commit(opts = {}){
   if (S.selEdge && refTo(S.selEdge) == null) setSelEdge(null);
   if (document.activeElement !== $("#yamlText")) { $("#yamlText").value = S.yamlSrc; setYamlMsg(); }
   refresh(opts.form);
+  showMoved(L0);
   markDirty();
 }
-/* 矢印がすべて外れたステップは、自動の配置だと左端へ詰められて見失いやすい。
-   直前の図で置かれていた列・段に固定（col・row）して、その場に留める */
-function keepUnlinked(){
-  if (!S.lastL?.linked) return;
-  const now = linkedIds(S.flow);
-  const lost = S.flow.steps.filter(s => !s.col && S.lastL.linked.has(s.id) && !now.has(s.id) && S.lastL.pos.has(s.id));
-  if (!lost.length) return;
-  const pos = layout(S.flow, null, true).pos;
-  lost.forEach(s => { const c = S.lastL.pos.get(s.id).c; if (pos.get(s.id)?.c !== c) s.col = c + 1; });
-  // 段も元のまま留める（列を固定すると段は引き継がれなくなるので、置き直して確かめる）
-  const pos2 = layout(S.flow, null, true).pos;
-  lost.forEach(s => { const t = S.lastL.pos.get(s.id).t; if (pos2.get(s.id) && pos2.get(s.id).t !== t) s.row = t + 1; });
-}
 function refresh(withForm){
+  // 位置を覚えたフローは、描く配置（YAML に書き足したステップの差し込みや、空いた列の詰めをしたもの）をそのまま覚え直す。
+  // 次の編集では、ここで覚えた位置から動かす（YAML の位置のままだと、差し込みでずれたステップが元の列に戻ってしまう）
+  if (S.flow?.steps.some(s => s.col)) keepPlaces(S.flow, null);
   setCmp(compareOf(S.flow));
   setIssues(validate(S.flow, { base: S.cmp?.base }));
   drawCanvas();
-  updateIssueBtn(); updateInfoBtn(); updateTidyBtn();
+  updateIssueBtn(); updateInfoBtn(); updateTidyBtn(); updateArrangeBtn();
   const bad =S.issues.filter(i => i.level === "bad").length, warn = S.issues.filter(i => i.level === "warn").length;
   const c = $("#issueCount"); c.textContent = bad + warn; c.className = "count" + (bad ? " bad" : warn ? " warn" : "");
   if (withForm) renderForm(); else updateFlags();
@@ -726,9 +733,32 @@ function splitHtml(){
   // 写し：ToBe でどうなったかを示す /「今の版」：写しの後に比較元がどう変わったかを示す
   const diff = now ? diffOpt(d, "tobe") : diffOpt(S.cmp.d, "ref");
   const sw = S.cmp.base && S.cmp.ups.length ? `<span class="mini-seg" role="group" aria-label="AsIs の版"><button data-refnow="0" aria-pressed="${!now}">写し</button><button data-refnow="1" aria-pressed="${!!now}">今の版</button></span>` : "";
-  const ref = diagramHtml("ref-diagram", F, diagramLayout(F), false, { ref: true, info: S.showInfo, diff });
+  let La = diagramLayout(F), Lt = diagramLayout(S.flow);
+  // 上下に並べるときは、対応するステップの列が同じ横の位置に来るよう、遅れているほうの列のすき間を広げる
+  if (S.cmpOrient === "tb"){
+    const [ea, et] = alignGaps(La, Lt, colPairs(La, Lt, tobeOf));
+    if (ea.size) La = diagramLayout(F, S.showIssues, ea);
+    if (et.size) Lt = diagramLayout(S.flow, S.showIssues, et);
+  }
+  const ref = diagramHtml("ref-diagram", F, La, false, { ref: true, info: S.showInfo, diff });
   return `<div class="cmp-split ${S.cmpOrient}"><section class="cmp-pane"><div class="cmp-h"><span class="ftag asis">AsIs</span><span class="nm">${esc(F.name)}</span>${sw}</div>${ref}</section>`
-    + `<section class="cmp-pane"><div class="cmp-h"><span class="ftag tobe">ToBe</span><span class="nm">${esc(S.flow.name)}</span></div>${renderSvg(S.flow, S.issues, S.selected, S.selEdge)}</section></div>`;
+    + `<section class="cmp-pane"><div class="cmp-h"><span class="ftag tobe">ToBe</span><span class="nm">${esc(S.flow.name)}</span></div>${renderSvg(S.flow, S.issues, S.selected, S.selEdge, Lt)}</section></div>`;
+}
+/* 編集で位置の変わったステップを見せる。L0 は編集の前の図の配置。前の位置から今の位置へ短く動かし（線は引き直した形で浮かび上がらせる。
+   動きを減らす設定のときは動かさない）、置き場所（担当・段・列）の変わったステップは枠を一度光らせる */
+function showMoved(L0){
+  const L = S.lastL, sv = mainSvg(); if (!L0 || !L || L0 === L || !sv) return;
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches, glide = [];
+  L.pos.forEach((p, id) => {
+    const q = L0.pos.get(id), g = q && sv.querySelector(`[data-step="${CSS.escape(id)}"]`); if (!g) return;
+    if (q.l !== p.l || q.t !== p.t || q.c !== p.c) g.insertAdjacentHTML("afterbegin", `<rect class="moved-hi" x="${p.x - 7}" y="${p.y - 11}" width="${p.w + 14}" height="${p.h + 22}" rx="10"/>`);
+    if (!still && (q.x !== p.x || q.y !== p.y)){ g.style.transform = `translate(${q.x - p.x}px, ${q.y - p.y}px)`; glide.push(g); }
+  });
+  setTimeout(() => sv.querySelectorAll(".moved-hi").forEach(r => r.remove()), 1600);
+  if (!glide.length) return;
+  sv.classList.add("relayout");
+  sv.getBoundingClientRect(); // 動かす前の位置を描いてから、今の位置へ動かす
+  glide.forEach(g => { g.style.transition = "transform .3s ease"; g.style.transform = ""; });
 }
 function updateHint(){
   const h = $("#canvasHint"); h.hidden = !S.flow;
@@ -831,7 +861,6 @@ function renderForm(){
         <div class="field"><label for="sl-${esc(s.id)}">内容</label><input class="inp" id="sl-${esc(s.id)}" data-sf="label" value="${esc(s.label)}" placeholder="例：申請書を作成"></div>
         <div class="grid2"><div class="field"><label for="st-${esc(s.id)}">種類</label><select class="inp" id="st-${esc(s.id)}" data-sf="type">${Object.entries(TYPES).map(([k, v]) => `<option value="${k}" ${k === s.type ? "selected" : ""}>${v}</option>`).join("")}</select></div>
         <div class="field"><label for="sn-${esc(s.id)}">担当</label><select class="inp" id="sn-${esc(s.id)}" data-sf="lane">${laneOpts(s.lane)}</select></div></div>
-        ${s.col || s.row ? `<div class="row"><span class="help">図の位置：${[s.col ? `左から ${s.col} 列目` : "", s.row ? `上から ${(S.lastL?.pos.get(s.id)?.t ?? s.row - 1) + 1} 段目` : ""].filter(Boolean).join("・")}に固定（図でドラッグして指定）</span><button class="btn sm ghost" data-act="col-auto">位置を自動に戻す</button></div>` : ""}
         <div class="field"><label for="so-${esc(s.id)}">補足（帳票名・期限・ルールなど）</label><textarea class="inp" id="so-${esc(s.id)}" data-sf="note" rows="3">${esc(s.note)}</textarea></div>
         <div class="field"><label for="si-${esc(s.id)}">課題（問題点・改善したい点）</label><textarea class="inp issue-inp" id="si-${esc(s.id)}" data-sf="issue" rows="3" placeholder="例：紙の書類を目視で確認しており時間がかかる">${esc(s.issue)}</textarea></div>
 `;
@@ -945,8 +974,17 @@ onPanels("change", ev => {
   const s = curStep(); if (!s) return;
   // 流れの途中のステップを帳票・データに変えたら、前後の流れをつなぎ直す（toArtifact）
   if (t.dataset.sf === "type"){ if (toArtifact(S.flow, s.id, t.value)) toast("前後のステップを矢印でつなぎ直し、この" + TYPES[t.value] + "は前のステップと関連（点線）で結びました"); if (!colorable(s)) delete s.color; commit({ form: true }); }
-  else if (t.dataset.sf === "lane"){ s.lane = t.value; commit({ form: true }); }
+  else if (t.dataset.sf === "lane"){ moveLane(s, t.value); commit({ form: true }); }
 });
+/* 担当を変える。図では列を変えずに、移した先のレーンの同じ列で空いている一番上の段に置く（縦に動くだけにして、ほかのステップは動かさない） */
+function moveLane(s, laneId){
+  const L0 = S.lastL, P = L0?.pos.get(s.id), li = L0 ? L0.lanes.findIndex(l => l.id === laneId) : -1;
+  s.lane = laneId;
+  if (!P || li < 0) return;
+  const taken = t => L0.steps.some(x => x.id !== s.id && L0.pos.get(x.id)?.l === li && L0.pos.get(x.id).t === t && L0.pos.get(x.id).c === P.c);
+  let t = 0; while (taken(t)) t++;
+  s.col = P.c + 1; s.row = t + 1;
+}
 /* 担当IDを変える。その担当に割り振っていたステップの lane もまとめて新しいIDに置き換える。
    同じIDの担当がほかにも残る場合（YAMLで重複させたとき）は、どちらの担当のステップか決められないのでステップはそのままにする。 */
 function renameLane(i, inp){
@@ -998,6 +1036,8 @@ onPanels("click", ev => {
       const r = S.records.get(S.currentId);
       if (r){ const history = (r.history || []).slice(); history.unshift({ at: Date.now(), name: S.flow.name, yaml: S.yamlSrc, memo: "ID振り直し前" }); setRecord(S.currentId, { ...r, history: history.slice(0, 20) }); }
       S.flow.steps.splice(0, S.flow.steps.length, ...order);
+      // 位置は今の図の ID で覚えているので、ID を変える前にステップに書いておく
+      keepPlaces(S.flow, S.lastL?.pos);
       S.flow.steps.forEach(x => { x.id = map.get(x.id); [...x.next, ...(x.related || [])].forEach(e => { if (map.has(e.to)) e.to = map.get(e.to); }); });
       if (S.selected) setSelected(map.get(S.selected) || null);
       toast(`IDを図の順に ${pre}1〜${pre}${S.flow.steps.length} に振り直しました（元の版は履歴に残しています）`); break;
@@ -1008,7 +1048,6 @@ onPanels("click", ev => {
       toast("ステップを削除しました。前後のつながりは自動でつなぎ直しています（Ctrl+Z で元に戻せます）"); return;
     }
     case "color": if (b.dataset.color) s.color = b.dataset.color; else delete s.color; break;
-    case "col-auto": delete s.col; delete s.row; break;
     case "dup": { const f = JSON.parse(JSON.stringify(S.flow)); f.name += "（コピー）"; delete f.id; create(toYaml(f)); return; }
     case "tobe": {
       // 2 つ目からの ToBe は「案B」「案C」…。名前を変えていない 1 つ目は「案A」に変える
@@ -1216,6 +1255,23 @@ function updateTidyBtn(){
   b.disabled = !n;
   b.title = !n ? "線はすべて自動で引いています（出入りする辺を指定した矢印・関連はありません）" : `出入りする辺を指定した矢印・関連 ${n} 本の指定を外して、線を自動で引き直します（ステップの位置は変えません）`;
 }
+/* 配置を整える：位置の記録を使わずに、矢印に合わせてステップを並べ直す（autoLayout）。並べ直しても同じなら押せない。
+   数は、左の列へ戻る流れの矢印のうち、差戻しなどのループでないもの（つなぎ直したあとに残りやすい） */
+function updateArrangeBtn(){
+  const b = $("#arrangeBtn"), cnt = $("#arrangeBtnCount"), L = S.flow && S.lastL;
+  const A = L && autoLayout(S.flow), same = !A || S.flow.steps.every(s => { const p = L.pos.get(s.id), q = A.pos.get(s.id); return !p || !q || (p.l === q.l && p.t === q.t && p.c === q.c); });
+  const n = L ? backLinks(L).length : 0;
+  cnt.textContent = n; cnt.hidden = !n;
+  b.disabled = same;
+  b.title = same ? "ステップは矢印に合わせて並んでいます" : `位置の記録を使わずに、矢印に合わせてステップを並べ直します${n ? `（左の列へ戻る矢印が ${n} 本あります。差戻しなどのループは数えません）` : ""}。Ctrl+Z で元に戻せます`;
+}
+$("#arrangeBtn").onclick = () => {
+  if (!S.flow) return;
+  const { pos } = autoLayout(S.flow);
+  S.flow.steps.forEach(s => { const p = pos.get(s.id); if (p){ s.col = p.c + 1; s.row = p.t + 1; } });
+  commit({ form: true });
+  toast("矢印に合わせて、ステップを並べ直しました（Ctrl+Z で元に戻せます）");
+};
 $("#tidyBtn").onclick = () => {
   if (!S.flow) return;
   const n = unpinEdges(S.flow); if (!n) return;
@@ -1427,7 +1483,7 @@ function plusEdge(){
 /* 図の空いた所（ダブルクリック・右クリック）：その位置に置くステップの種類を選ぶメニューを出す。
    右クリック（more）では、貼り付け・全体を表示も出す。担当（レーン）の外や「担当未設定」の仮レーンでは出さない（false を返す） */
 function addMenu(ev, more){
-  if (!S.flow || ev.target.closest(".ref-diagram, .cmp-h, .empty, [data-step], [data-edge], [data-co], [data-handle], [data-eplus], [data-end]")) return false;
+  if (!S.flow || ev.target.closest(".ref-diagram, .cmp-h, .empty, [data-step], [data-ref], [data-edge], [data-co], [data-handle], [data-eplus], [data-end]")) return false;
   const p = toSvg(ev.clientX, ev.clientY);
   if (!p || p[0] < G.label || !slotAt(p[1])){
     if (p && !S.flow.lanes.length) toast("「全体」タブで担当（レーン）を追加すると、図にステップを置けます");
@@ -1664,15 +1720,15 @@ function endDrag(ev, cancel){
   if (!sl || (sl.lane.id === s.lane && c === P.c && sl.t === P.t && !sl.ins)){ drawCanvas(); return; }
   moveStep(s, sl.lane, c, { ...sl, drop: true });
 }
-/* 図の位置の指定（col・row）を書く。s を lane の段 sl（slotAt の形）・c 列目（0 始まり。null なら列は自動のまま）に置く。
+/* 図の位置（col・row）を書く。s を lane の段 sl（slotAt の形）・c 列目（0 始まり。null なら列は矢印に合わせて差し込む）に置く。
    置くマス（段と段の境目なら、その下の段のマス）にほかのステップがいるときは、その列（c）で置く段から下のステップを 1 段ずつ下げ、
-   列も固定して同じ列の真下に留める。ほかの列のステップは動かさない（sl.drop のない左右だけの移動＝ Shift+←→ では下げない）。
+   同じ列の真下に留める。ほかの列のステップは動かさない（sl.drop のない左右だけの移動＝ Shift+←→ では下げない）。
    空いたマスなら、だれも動かさずにそこへ置く（境目でも段は増えない。一番下の境目なら新しい段になる）。
    列の決まっていない新しいステップ（c が null）を境目に置くときは、レーン全体で置く段から下を 1 段ずつ下げる。
    下げたステップには段を書き、もともと段を指定していたステップは今の段に書き直す（指定のないステップは前のステップの段を引き継ぐ）。
-   Shift+←→ で同じマスに列を指定していたステップは、列の指定を外して自動の配置に戻す。最後に、外しても配置が変わらない指定を外す */
+   Shift+←→ で動かした先のマスにいたステップは、動かしたステップの元のマスへ移す（入れ替え） */
 function pinSlot(s, lane, sl, c){
-  const L0 = S.lastL, li = L0.lanes.indexOf(lane), touched = [s], P = L0.pos.get(s.id);
+  const L0 = S.lastL, li = L0.lanes.indexOf(lane), P = L0.pos.get(s.id);
   const push = c != null && (sl.ins || sl.drop || !P || P.l !== li || P.t !== sl.t)
     && L0.steps.some(x => x.id !== s.id && L0.pos.get(x.id)?.l === li && L0.pos.get(x.id).t === sl.t && L0.pos.get(x.id).c === c);
   s.lane = lane.id;
@@ -1680,21 +1736,13 @@ function pinSlot(s, lane, sl, c){
   S.flow.steps.forEach(x => {
     const p = x !== s && L0.pos.get(x.id); if (!p || p.l !== li) return;
     const down = p.t >= sl.t && (c != null ? push && p.c === c : sl.ins);
-    if (down || x.row){ x.row = p.t + 1 + (down ? 1 : 0); touched.push(x); }
+    if (down || x.row) x.row = p.t + 1 + (down ? 1 : 0);
     if (push && down) x.col = c + 1;
-    else if (c != null && !sl.ins && p.t === sl.t && x.col === s.col) delete x.col;
+    else if (c != null && P && !sl.ins && p.t === sl.t && p.c === c){ x.col = P.c + 1; x.row = P.t + 1; }
   });
   s.row = sl.t + 1;
-  prunePins(touched);
 }
-// list のステップの col・row のうち、外してもステップの置き場所（レーン・段・列）が変わらないものを外す
-function prunePins(list){
-  const spots = () => { const P = layout(S.flow, null, true).pos; return S.flow.steps.map(x => { const p = P.get(x.id); return p ? p.l + ":" + p.t + ":" + p.c : ""; }).join(); };
-  const want = spots();
-  // 列の指定を外すと段が自動に戻ることがあるので、2 回まわす
-  for (let i = 0; i < 2; i++) list.forEach(x => ["col", "row"].forEach(k => { if (!x[k]) return; const v = x[k]; delete x[k]; if (spots() !== want) x[k] = v; }));
-}
-/* ステップを lane の段 sl・c 列目（0 始まり）へ動かす。自動で決まる位置と同じなら指定（col・row）は外し、違えば残す */
+/* ステップを lane の段 sl・c 列目（0 始まり）へ動かす */
 function moveStep(s, lane, c, sl){
   pinSlot(s, lane, sl, c);
   commit({ form: true, select: s.id });
@@ -1705,10 +1753,11 @@ $("#canvas").addEventListener("pointercancel", ev => endDrag(ev, true));
 function undo(redo){
   const e = takeUndo(redo);
   if (!e){ toast(redo ? "やり直せる操作はありません" : "元に戻せる操作はありません"); return; }
+  const L0 = S.lastL;
   setYamlSrc(e.yaml); setFlow(parseYaml(e.yaml));
   setSelected(S.flow.steps.some(s => s.id === e.sel) ? e.sel : null); setSelEdge(null);
   $("#yamlText").value = S.yamlSrc; setYamlMsg(); $("#flowName").value = S.flow.name;
-  refresh(true); markDirty(); toast(redo ? "やり直しました" : "元に戻しました");
+  refresh(true); showMoved(L0); markDirty(); toast(redo ? "やり直しました" : "元に戻しました");
 }
 /* Ctrl+C / Ctrl+V：選んだステップを写して貼る。写すのは中身（種類・担当・文言・補足・課題・ツール・色）だけで、矢印・関連は写さない。
    写したものはこのタブの中で覚えておくので、別のフローにも貼れる */

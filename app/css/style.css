@@ -162,6 +162,11 @@ body.resizing{cursor:col-resize;user-select:none}
 .canvas.reattaching .sel-edge{opacity:.25}
 .canvas svg .node.link-target .shape{stroke:var(--sel);stroke-width:3}
 .canvas svg .node.dragging{pointer-events:none}
+/* 編集で動いたステップ（showMoved）：置き場所の変わったステップの枠を一度光らせ、引き直した線は浮かび上がらせる */
+.canvas svg .moved-hi{fill:none;stroke:var(--sel);stroke-width:2.5;pointer-events:none;animation:movedHi 1.6s ease-out forwards}
+@keyframes movedHi{0%,45%{opacity:.85}100%{opacity:0}}
+.canvas svg.relayout .edge,.canvas svg.relayout .elabel,.canvas svg.relayout .callout{animation:relayoutIn .3s ease}
+@keyframes relayoutIn{from{opacity:0}}
 /* フロー全体のメモ（図の下）。高さは --memo-h（上の境目のドラッグで変える） */
 .memo{--memo-h:160px;position:relative;flex:none;display:flex;flex-direction:column;border-top:1px solid var(--line);background:var(--surface)}
 .memo-split{position:absolute;left:0;right:0;top:-5px;height:9px;z-index:5;cursor:row-resize;touch-action:none}
@@ -345,12 +350,12 @@ textarea.inp.info-inp{resize:vertical;min-height:0}
 .body.focus{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
 .body.focus .panel,.body.focus .splitter,.body.focus .memo{display:none}
 @media (min-width:861px){.body.focus .side{display:none}}
-#issueBtn svg,#infoBtn svg,#tidyBtn svg{width:14px;height:14px;flex:none}
+#issueBtn svg,#infoBtn svg,#tidyBtn svg,#arrangeBtn svg{width:14px;height:14px;flex:none}
 #issueBtn .cnt{background:color-mix(in srgb,var(--bad) 14%,transparent);color:var(--bad);border-radius:999px;padding:0 6px;font-size:11px;font-weight:600;line-height:16px;font-variant-numeric:tabular-nums}
-#infoBtn .cnt,#tidyBtn .cnt{background:var(--accent-soft);color:var(--accent);border-radius:999px;padding:0 6px;font-size:11px;font-weight:600;line-height:16px;font-variant-numeric:tabular-nums}
-#issueBtn:disabled,#infoBtn:disabled,#tidyBtn:disabled{opacity:.5;cursor:default}
+#infoBtn .cnt,#tidyBtn .cnt,#arrangeBtn .cnt{background:var(--accent-soft);color:var(--accent);border-radius:999px;padding:0 6px;font-size:11px;font-weight:600;line-height:16px;font-variant-numeric:tabular-nums}
+#issueBtn:disabled,#infoBtn:disabled,#tidyBtn:disabled,#arrangeBtn:disabled{opacity:.5;cursor:default}
 #issueBtn[aria-pressed="true"],#infoBtn[aria-pressed="true"],#focusBtn[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
-@media (prefers-reduced-motion:reduce){.side{transition:none}.splitter::after,.memo-split::after,.memo-toggle svg,.legend-toggle svg{transition:none}}
+@media (prefers-reduced-motion:reduce){.canvas svg .moved-hi{animation:none;opacity:.85}.side{transition:none}.splitter::after,.memo-split::after,.memo-toggle svg,.legend-toggle svg{transition:none}}
 
 /* ---------- AsIs／ToBe の比較 ---------- */
 /* 比較の帯：図のすぐ上に、淡い藍の帯で「比較のための操作」をまとめる。

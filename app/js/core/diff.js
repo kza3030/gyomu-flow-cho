@@ -234,7 +234,8 @@ function resolveUpdate(tobe, current, item, how, now){
       }
       case "edgeWhen": { const e = stepOf(F, onTobe ? item.tFrom : item.from)?.next.find(x => x.to === (onTobe ? item.tTo : item.to)); if (e) e.when = item.now; break; }
       case "addStep":
-        if (!stepOf(F, item.id)){ const s = clone(item.step); s.next = []; s.related = []; delete s.from; delete s.change; F.steps.splice(placeAt(F), 0, s); }
+        // 図の位置（col・row）は比較元のものなので写さない（ToBe の図では、つなぐ矢印に合わせて差し込む）
+        if (!stepOf(F, item.id)){ const s = clone(item.step); s.next = []; s.related = []; delete s.from; delete s.change; delete s.col; delete s.row; F.steps.splice(placeAt(F), 0, s); }
         item.edges.forEach(e => edgeChange(F, e, onTobe));
         break;
       case "delStep":

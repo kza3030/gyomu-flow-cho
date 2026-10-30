@@ -27,8 +27,9 @@ function linkedIds(f){
   return on;
 }
 // co は課題の吹き出しの置き方（calloutPlan の結果）。渡すと、吹き出しを入れるレーンをその分だけ上下に広げて配置する。
-// placeOnly なら、ステップの置き場所（レーン・段・列）だけを決めて返す（線は引かない）
-function layout(f, co, placeOnly){
+// placeOnly なら、ステップの置き場所（レーン・段・列）だけを決めて返す（線は引かない）。
+// extra は列のすき間 g（-1 はレーン名の右）ごとに足す幅（alignGaps の結果。AsIs と ToBe を上下に並べるときに列の横の位置をそろえる）
+function layout(f, co, placeOnly, extra){
   const lanes = f.lanes.slice();
   const laneIdx = new Map(lanes.map((l, i) => [l.id, i]));
   if (f.steps.some(s => !laneIdx.has(s.lane))){ laneIdx.set("__none", lanes.length); lanes.push({ id: "__none", name: "（担当未設定）", ghost: true }); }
@@ -69,13 +70,43 @@ function layout(f, co, placeOnly){
   const pathFree = (a, b, c) => lanes.every((l, r) => [...tiers[r]].every(t => !between(a, b, [r, t]) || cellFree(r, t, c)));
   const place = (id, r, t, c) => { cells.set(cell(r, t, c), id); col.set(id, c); tier.set(id, t); tiers[r].add(t); };
   const succ = new Map(steps.map(s => [s.id, new Set()])); preds.forEach((ps, id) => ps.forEach(p => succ.get(p).add(id)));
-  // 列を指定したステップ（図で左右に動かしたもの）は先にその列へ置く。同じマスが埋まっていれば右へずらす
+  /* 位置（col・row）を持つステップがあれば、位置を覚えた図（sketch）として置く。位置を持つステップはそのマスに置き、つなぎ方では動かさない。
+     位置のないステップ（図で足した・YAML に書き足した）だけを矢印に合わせて差し込み、置く所がふさがっているときや、
+     後ろのステップより右に来てしまうときは、そこから右の列を全部 1 列ずらして場所を空ける（列の差し込み）。最後に、どのレーンも空の列を詰める。
+     位置を持つステップが 1 つもなければ、すべて矢印から決める（自動の配置） */
+  const sketch = steps.some(s => s.col), fixed = new Set(steps.filter(s => s.col).map(s => s.id));
+  const want = new Map(steps.filter(s => s.col).map(s => [s.id, s.col - 1]));
+  // 列 c0 から右を 1 列ずらす（置いたステップ・これから置く位置を持つステップ・縦に走る矢印）
+  const shift = c0 => {
+    want.forEach((c, id) => { if (c >= c0) want.set(id, c + 1); });
+    const mv = [...col].filter(([, c]) => c >= c0);
+    mv.forEach(([id, c]) => cells.delete(cell(rowOf(byId.get(id)), tier.get(id), c)));
+    mv.forEach(([id, c]) => { col.set(id, c + 1); cells.set(cell(rowOf(byId.get(id)), tier.get(id), c + 1), id); });
+    segs.forEach(g => { if (g.c >= c0) g.c++; });
+  };
+  // x の後ろ（前へ進む矢印の先で、もう置いたステップ）が x より左（同じレーンなら x の列まで）にあれば、x の右へ動かす。動かした先も同じように確かめる
+  const pull = (x, seen) => {
+    const cx = col.get(x), rx = rowOf(byId.get(x));
+    succ.get(x).forEach(y => {
+      if (!col.has(y) || seen.has(y)) return;
+      const ry = rowOf(byId.get(y)), ty = tier.get(y); let n = cx + (ry === rx ? 1 : 0);
+      if (col.get(y) >= n) return;
+      // 真下・真上のマスがふさがっていれば右隣の列へ。そこもふさがっていれば列を差し込む
+      if (cells.has(cell(ry, ty, n))){ if (n === cx) n++; if (cells.has(cell(ry, ty, n))) shift(n); }
+      seen.add(y); cells.delete(cell(ry, ty, col.get(y))); col.set(y, n); cells.set(cell(ry, ty, n), y);
+      pull(y, seen);
+    });
+  };
+  /* 位置を持つステップを先にそのマスへ置く。同じマスを取り合う（YAML の書き違い・担当を書き換えたなど）ときは、
+     後のステップ（流れの順）のために右へ列を差し込んで置き、その後ろのステップが左に残らないようにする */
+  const bumped = [];
   order.forEach(id => {
     const s = byId.get(id); if (!s.col) return;
-    const r = rowOf(s), t = s.row ? s.row - 1 : 0; let c = s.col - 1;
-    while (cells.has(cell(r, t, c))) c++;
+    const r = rowOf(s), t = s.row ? s.row - 1 : 0; let c = want.get(id);
+    if (cells.has(cell(r, t, c))){ shift(c + 1); c++; bumped.push(id); }
     place(id, r, t, c);
   });
+  bumped.forEach(id => pull(id, new Set([id])));
   order.forEach(id => {
     if (col.has(id)) return;
     const s = byId.get(id), r = rowOf(s), ps = [...new Set(preds.get(id))].filter(p => col.has(p)).map(p => ({ id: p, c: col.get(p), r: rowOf(byId.get(p)), t: tier.get(p) }));
@@ -84,16 +115,33 @@ function layout(f, co, placeOnly){
     let c = 0; ps.forEach(p => { c = Math.max(c, p.c + (p.r === r || fork(p) ? 1 : 0)); });
     const own = ps.filter(p => p.r === r), t0 = s.row ? s.row - 1 : own.length ? Math.min(...own.map(p => p.t)) : 0;
     const ok = (t, c) => cellFree(r, t, c) && ps.every(p => p.c !== c || pathFree([p.r, p.t], [r, t], c));
+    // 後ろの、もう置いたステップ（位置を覚えた図で、間や前にステップを足したとき）。need は、このステップを置ける一番右の列
+    const after = sketch ? [...succ.get(id)].filter(x => col.has(x)) : [], need = x => col.get(x) - (rowOf(byId.get(x)) === r ? 1 : 0);
+    if (after.length && !ps.length){
+      // 前のないステップは、後ろのステップのすぐ手前に置く。ふさがっていれば、後ろのステップの列に差し込む
+      const b = after.reduce((x, y) => need(y) < need(x) ? y : x);
+      c = need(b);
+      if (c < 0 || !ok(t0, c)){ c = col.get(b); shift(c); }
+    } else if (after.some(x => need(x) < c)){
+      // 後ろのステップがこのステップより左に来てしまうなら、列を差し込んで場所を空ける（真下・真上に受け取るときは、前ステップの右隣に）
+      if (ps.some(p => p.c === c)) c++;
+      shift(c);
+    }
     let t = t0;
     while (!ok(t, c)){
-      // ふさいでいるのが同じ前ステップから分かれた先なら下の段へ。それ以外は右の列へ
+      // ふさいでいるのが同じ前ステップから分かれた先なら下の段へ。位置を覚えた図でほかのステップがふさいでいれば列を差し込む
+      // （真下・真上に受け取るときは前ステップの右隣の列に）。それ以外は右の列へ
       const o = cells.get(cell(r, t, c));
       if (!s.row && o && ps.some(p => succ.get(p.id).has(o))) t++;
+      else if (sketch && o && fixed.has(o)){ if (ps.some(p => p.c === c)) c++; shift(c); t = t0; }
       else { c++; t = t0; }
     }
     place(id, r, t, c);
     ps.forEach(p => { if (p.c === c) segs.push({ c, a: [p.r, p.t], b: [r, t] }); });
+    if (sketch) pull(id, new Set([id]));
   });
+  // 位置を覚えた図では、どのレーンにもステップのない列を詰める（段は行にするときに詰める）
+  if (sketch){ const at = new Map([...new Set(col.values())].sort((a, b) => a - b).map((c, i) => [c, i])); col.forEach((c, id) => col.set(id, at.get(c))); }
   const maxCol = Math.max(0, ...col.values());
   /* 段を詰めて、図の上から通し番号の「行」にする（中身のない段は描かない。どのレーンも 1 行以上）。
      ここから先の線の引き回しは行ごとに考える。rows[g] = { r: レーン, t: 詰めたあとの段, t0: 詰める前の段 } */
@@ -244,8 +292,9 @@ function layout(f, co, placeOnly){
     if (X % 2){ groups.forEach(g => spread(g, 18, G.nodeW / 2 - 22)); return; }
     const g0 = X / 2 - 1, z = zone.get(g0) || 0, w = Math.max(gapW.get(g0), z + 10 + (Math.max(...groups.map(g => g[0].m)) - 1) * G.track + 12);
     gapW.set(g0, w);
-    groups.forEach(g => g.forEach(S => { S.off = z ? z + 10 + S.lv * G.track : w / 2 + (S.lv - (S.m - 1) / 2) * G.track; }));
+    groups.forEach(g => g.forEach(S => { S.off = z ? z + 10 + S.lv * G.track : (w + (extra?.get(g0) || 0)) / 2 + (S.lv - (S.m - 1) / 2) * G.track; }));
   });
+  if (extra) gapW.forEach((w, g) => gapW.set(g, w + (extra.get(g) || 0)));
   const colX = [G.label + gapW.get(-1)];
   for (let c = 1; c <= maxCol; c++) colX[c] = colX[c - 1] + G.nodeW + gapW.get(c - 1);
   pos.forEach(p => { p.x = colX[p.c]; });
@@ -295,6 +344,63 @@ function layout(f, co, placeOnly){
   edges.forEach(E => { if (E.label){ E.lp = placeLabel(E.pts, E.label, obst); obst.push({ x1: E.lp[0] - E.label.w / 2 - 3, y1: E.lp[1] - E.label.h / 2 - 3, x2: E.lp[0] + E.label.w / 2 + 3, y2: E.lp[1] + E.label.h / 2 + 3, wt: 3 }); } });
 
   return { lanes, rows, steps, pos, edges, colX, laneY, bandY, rowY, callouts, linked: linkedIds(f), width, height: lanes.length ? laneY[lanes.length] : G.laneH };
+}
+/* 位置を覚える（編集のたびに app.js の commit から呼ぶ）。prev は編集の前の図のステップの置き場所（layout の pos）。
+   位置（col）を持たないステップのうち、編集の前の図にあったものにはその列と、段（編集で段だけ決めていなければ）を書く
+   （つなぎ方を変えても動かない。初めて編集するフローも、ここで今の配置を覚える）。
+   そのうえで配置し直し、足したステップの位置・列の差し込み・空いた列の詰めを、すべてのステップの col・row に書く */
+function keepPlaces(f, prev){
+  if (prev) f.steps.forEach(s => { const p = !s.col && prev.get(s.id); if (p){ s.col = p.c + 1; s.row ??= p.t + 1; } });
+  const { pos } = layout(f, null, true);
+  f.steps.forEach(s => { const p = pos.get(s.id); if (p){ s.col = p.c + 1; s.row = p.t + 1; } });
+}
+/* AsIs（A）と ToBe（B）の図で、列どうしの対応 [A の列, B の列] の並び。match(A のステップ ID) は B で対応するステップの ID の並び。
+   A の列ごとに、対応するステップがいちばん多く置かれた B の列を選び、どちらの列も左から右へ増えていく組をなるべく多く残す */
+function colPairs(A, B, match){
+  const votes = new Map();
+  A.pos.forEach((p, id) => match(id).forEach(t => { const q = B.pos.get(t); if (!q) return; const v = votes.get(p.c) || new Map(); v.set(q.c, (v.get(q.c) || 0) + 1); votes.set(p.c, v); }));
+  const cand = [...votes].map(([a, v]) => [a, [...v].sort((x, y) => y[1] - x[1] || x[0] - y[0])[0][0]]).sort((x, y) => x[0] - y[0]);
+  // 最長増加部分列（列の数は多くないので O(n²)）
+  const len = cand.map(() => 1), prev = cand.map(() => -1);
+  cand.forEach(([, b], i) => { for (let j = 0; j < i; j++) if (cand[j][1] < b && len[j] + 1 > len[i]){ len[i] = len[j] + 1; prev[i] = j; } });
+  const out = []; for (let i = len.indexOf(Math.max(0, ...len)); i >= 0; i = prev[i]) out.unshift(cand[i]);
+  return out;
+}
+/* 上下に並べた A と B で、対応する列（pairs）が同じ横の位置に来るよう、遅れているほうの列の左のすき間を広げる幅。[A の extra, B の extra]（layout の extra） */
+function alignGaps(A, B, pairs){
+  const ea = new Map(), eb = new Map(); let da = 0, db = 0;
+  pairs.forEach(([a, b]) => {
+    const xa = A.colX[a] + da, xb = B.colX[b] + db;
+    if (xa < xb){ ea.set(a - 1, (ea.get(a - 1) || 0) + xb - xa); da += xb - xa; }
+    else if (xb < xa){ eb.set(b - 1, (eb.get(b - 1) || 0) + xa - xb); db += xa - xb; }
+  });
+  return [ea, eb];
+}
+/* ToBe（B）の図に描く、削除したステップの跡。A は比較元（AsIs の写し）の図、ids は削除したステップの ID。
+   A で置いていた列に対応する B の列（pairs）の、同じ担当・同じ段のマスが空いていれば、そこに置く { id, step, x, y }（空いていなければ描かない） */
+function ghostSpots(A, B, pairs, ids){
+  const colOf = new Map(pairs);
+  return ids.flatMap(id => {
+    const p = A.pos.get(id), st = A.steps.find(s => s.id === id), c = p && colOf.get(p.c); if (c == null) return [];
+    const l = B.lanes.findIndex(x => x.id === A.lanes[p.l].id && !x.ghost), g = B.rows.findIndex(w => w.r === l && w.t === p.t);
+    if (l < 0 || g < 0 || [...B.pos.values()].some(q => q.l === l && q.t === p.t && q.c === c)) return [];
+    return [{ id, step: st, x: B.colX[c], y: B.rowY[g] }];
+  });
+}
+// 位置（col・row）を使わずに、矢印だけから決めた配置（「配置を整える」で並べ直す先）。ステップの置き場所だけを返す
+function autoLayout(f){
+  const L = layout({ ...f, steps: f.steps.map(({ col, row, ...s }) => s) }, null, true);
+  // 位置を覚えた図と比べられるよう、空の列を詰めておく
+  const at = new Map([...new Set([...L.pos.values()].map(p => p.c))].sort((a, b) => a - b).map((c, i) => [c, i]));
+  L.pos.forEach(p => { p.c = at.get(p.c); });
+  return L;
+}
+/* 左の列へ戻る流れの矢印のうち、ループ（つなぎ先から流れをたどって元のステップへ戻れる。差戻し・再提出など）でないもの。
+   位置を覚えた図でつなぎ直したあとに残りやすく、「配置を整える」で並べ直す目安にする。L は layout の結果 */
+function backLinks(L){
+  const by = new Map(L.steps.map(s => [s.id, s]));
+  const reach = (a, b) => { const seen = new Set([a]), q = [a]; while (q.length){ const x = q.shift(); if (x === b) return true; (by.get(x)?.next || []).forEach(e => { if (!seen.has(e.to) && by.has(e.to)){ seen.add(e.to); q.push(e.to); } }); } return false; };
+  return L.edges.filter(E => !E.assoc && E.kind !== "self" && E.b.c < E.a.c && !reach(E.t.id, E.s.id));
 }
 // 点数（k）の小さい順に取り出す
 function minHeap(){
@@ -477,5 +583,5 @@ function wrapLabel(t, per = 9, max = 3){
   return lines;
 }
 
-Object.assign(globalThis.Flowbook ??= {}, { G, LB, CO, DB_RY, textW, edgeLabel, labelCut, linkedIds, layout, calloutPlan, topY, portSpan, atOff, offAt, portAt, placeLabel, wrapText, wrapLabel });
+Object.assign(globalThis.Flowbook ??= {}, { G, LB, CO, DB_RY, textW, edgeLabel, labelCut, linkedIds, layout, keepPlaces, autoLayout, backLinks, colPairs, alignGaps, ghostSpots, calloutPlan, topY, portSpan, atOff, offAt, portAt, placeLabel, wrapText, wrapLabel });
 })();
