@@ -120,23 +120,42 @@ function edgePlusAt(E){
   for (const r of [0.5, 0.35, 0.65, 0.25, 0.75]){ const q = alongPts(E.pts, r); if (off(q)) return q; }
   return alongPts(E.pts, 0.5);
 }
-/* AsIs との差分の色と札。枠はステップの色（color）と重ならないよう、図形の外側に線で描く */
+/* AsIs との差分の色と札。枠はステップの色（color）と重ならないよう、図形の外側に線で描く。
+   札（diffTagSvg）は枠の右上の上に置く。ステップの上に課題の吹き出しがあっても隠れないよう、図では吹き出しより後に描き、
+   co（ステップの上の吹き出し）があれば、その最後の行の文字にかからない高さまで下げる（吹き出しの下の余白に重ねる） */
 const DIFF_COLOR = { add: "--good", rep: "--warn", chg: "--warn", repsrc: "--warn", move: "--info", del: "--bad" };
 const DIFF_BADGE = { add: "追加", rep: "置換", chg: "変更", repsrc: "置換", move: "移動", del: "削除" };
-function diffMarkSvg(st, moved, p, type){
-  const dec = type === "decision" ? 6 : 0, c = `var(${DIFF_COLOR[st]})`;
-  let g = `<rect x="${p.x - 5}" y="${p.y - 5 - dec}" width="${p.w + 10}" height="${p.h + 10 + 2 * dec}" rx="9" fill="none" stroke="${c}" stroke-width="2.2"${st === "del" ? ' stroke-dasharray="5 3"' : ""}/>`;
-  const tags = [st, ...(moved && st !== "move" && st !== "add" ? ["move"] : [])];
-  let x = p.x + p.w + 5;
+function diffMarkSvg(st, p, type){
+  const dec = type === "decision" ? 6 : 0;
+  return `<rect x="${p.x - 5}" y="${p.y - 5 - dec}" width="${p.w + 10}" height="${p.h + 10 + 2 * dec}" rx="9" fill="none" stroke="var(${DIFF_COLOR[st]})" stroke-width="2.2"${st === "del" ? ' stroke-dasharray="5 3"' : ""}/>`;
+}
+function diffTagSvg(st, moved, p, type, co){
+  const dec = type === "decision" ? 6 : 0, tags = [st, ...(moved && st !== "move" && st !== "add" ? ["move"] : [])];
+  const y = Math.max(p.y - 25 - dec, co ? co.y + co.h - CO.padY - 3 : -Infinity);
+  let g = "", x = p.x + p.w + 5;
   tags.reverse().forEach(k => {
     const w = 28; x -= w;
-    g += `<rect x="${x}" y="${p.y - 25 - dec}" width="${w}" height="14" rx="4" fill="var(${DIFF_COLOR[k]})"/><text x="${x + w / 2}" y="${p.y - 18 - dec}" text-anchor="middle" dominant-baseline="middle" font-size="9.5" font-weight="600" fill="var(--surface)">${DIFF_BADGE[k]}</text>`;
+    g += `<rect x="${x}" y="${y}" width="${w}" height="14" rx="4" fill="var(${DIFF_COLOR[k]})"/><text x="${x + w / 2}" y="${y + 7}" text-anchor="middle" dominant-baseline="middle" font-size="9.5" font-weight="600" fill="var(--surface)">${DIFF_BADGE[k]}</text>`;
     x -= 3;
   });
   return g;
 }
 // 関連の線の見た目：点線と、塗らない矢じり（BPMN の関連にならう）
 const ASSOC_DASH = 'stroke-dasharray="2 3"';
+/* 矢印の見た目。図の本体と、画像で枚をまたぐ矢印（pageSvg）で同じにする。
+   df は図に重ねる差分（diagramBodySvg の o.diff）、h は強調する（選択中のステップに出入りする・選んだ）矢印か */
+const edgeDiff = (E, df) => df ? df.edges.get(E.s.id + (E.assoc ? "~" : ">") + E.t.id) || "same" : "";
+// 線：追加・削除した矢印は線の色を変える（条件だけ変わった矢印は、条件ラベルの枠の色で示す）。関連と削除した矢印は点線
+function edgeLook(E, df, h){
+  const ed = edgeDiff(E, df), dc = !h && (ed === "add" || ed === "del") && DIFF_COLOR[ed];
+  return {
+    stroke: h ? "var(--sel)" : dc ? `var(${dc})` : "var(--muted)", width: h ? 2.2 : dc ? 2 : 1.4,
+    dash: E.assoc || ed === "del" ? ASSOC_DASH.replace("2 3", ed === "del" ? "5 3" : "2 3") : "",
+    marker: (E.assoc ? "oar" : "arr") + (h ? "S" : dc ? ed : "")
+  };
+}
+// 条件ラベルの枠の色
+const labelColor = (E, df, h) => { const ed = edgeDiff(E, df); return h ? "var(--sel)" : DIFF_COLOR[ed] ? `var(${DIFF_COLOR[ed]})` : "var(--line-strong)"; };
 /* 図の本体（レーンの帯・矢印・ステップ・条件ラベル・課題の吹き出し）。座標は配置 L のまま（帯は x = 0〜W に描く）。
    o.ui = { selected, selEdge, issueBy } なら画面用：選択と強調・矢印の当たり判定・チェックの丸・補足と課題のしるし・
    全文の吹き出し・＋ハンドルを足す。o.ui がなければ画像用：操作のための部品は出さず、CSS のクラスで付けている色は属性で書く。
@@ -157,29 +176,27 @@ function diagramBodySvg(f, L, W, H, o){
   // ドラッグ中に移動先のレーンを示す枠（ふだんは隠しておく）
   if (ui) s += `<rect class="lane-hi" x="${G.label}" y="0" width="${W - G.label}" height="${G.laneH}" visibility="hidden"/>`;
   const selected = ui ? ui.selected : null, selEdge = ui ? ui.selEdge : null, df = o.diff;
-  const edgeDf = E => df ? df.edges.get(E.s.id + (E.assoc ? "~" : ">") + E.t.id) || "same" : "";
   // 選択中のステップに出入りする矢印（矢印を選んだときはその矢印）は強調して最前面に
   const isSelEdge = E => isRef(E, selEdge);
   const hot = E => selEdge ? isSelEdge(E) : !!selected && (E.s.id === selected || E.t.id === selected);
   const shown = o.edgeFilter ? L.edges.filter(o.edgeFilter) : L.edges;
   const edges = [...shown.filter(E => !hot(E)), ...shown.filter(hot)];
   edges.forEach(E => {
-    // 追加・削除した矢印は線の色を変える（条件だけ変わった矢印は、条件ラベルの枠の色で示す）
-    const h = hot(E), ed = edgeDf(E), dc = !h && (ed === "add" || ed === "del") && DIFF_COLOR[ed], c = h ? "var(--sel)" : dc ? `var(${dc})` : "var(--muted)";
-    const m = (E.assoc ? "oar" : "arr") + (h ? "S" : dc ? ed : "");
-    s += `<path class="edge${E.assoc ? " assoc" : ""}${h ? " hot" : ""}${isSelEdge(E) ? " sel-edge" : ""}" data-s="${esc(E.s.id)}" data-t="${esc(E.t.id)}" data-k="${edgeKey(E)}" d="${pathD(E.pts)}" fill="none" stroke="${c}" stroke-width="${h ? 2.2 : dc ? 2 : 1.4}" ${E.assoc || ed === "del" ? ASSOC_DASH.replace("2 3", ed === "del" ? "5 3" : "2 3") : ""} marker-end="url(#${m})"/>`;
+    const h = hot(E), lk = edgeLook(E, df, h);
+    s += `<path class="edge${E.assoc ? " assoc" : ""}${h ? " hot" : ""}${isSelEdge(E) ? " sel-edge" : ""}" data-s="${esc(E.s.id)}" data-t="${esc(E.t.id)}" data-k="${edgeKey(E)}" d="${pathD(E.pts)}" fill="none" stroke="${lk.stroke}" stroke-width="${lk.width}" ${lk.dash} marker-end="url(#${lk.marker})"/>`;
   });
   // 細い矢印でもダブルクリックしやすいよう、透明の太い線を重ねる（data-k は edgeKey）
   if (ui) edges.forEach(E => {
     const tip = E.assoc ? "関連（点線）\nクリックで選び、端のドラッグでつなぎ替え" : (E.label ? `条件「${E.label.t}」\nダブルクリックで条件を編集` : "ダブルクリックで条件を追加") + "\nクリックで選ぶと、＋で間にステップを入れられる";
     s += `<path class="ehit" data-edge="${esc(E.s.id)}" data-k="${edgeKey(E)}" d="${pathD(E.pts)}"><title>${esc(tip)}</title></path>`;
   });
+  let tags = ""; // 差分の札（課題の吹き出しより後に描く）
   L.steps.forEach(st => {
     const p = L.pos.get(st.id), sel = st.id === selected;
     const onDark = st.type === "start" || st.type === "end";
     const dst = df ? df.steps.get(st.id) || "same" : "", dim = dst === "same" && df.dim ? ' opacity=".45"' : "";
     s += o.ref ? `<g class="node ref" data-ref="${esc(st.id)}"${dim}>` : ui ? `<g class="node" data-step="${esc(st.id)}" tabindex="0" role="button" aria-label="${esc(TYPES[st.type] + "：" + (st.label || st.id) + (st.issue ? "（課題あり）" : ""))}"${dim}>` : `<g${dim}>`;
-    if (dst && dst !== "same") s += diffMarkSvg(dst, df.moved.has(st.id), p, st.type);
+    if (dst && dst !== "same"){ const co = coBy.get(st.id); s += diffMarkSvg(dst, p, st.type); tags += diffTagSvg(dst, df.moved.has(st.id), p, st.type, co?.side === "T" ? co : null); }
     if (sel) s += `<rect x="${p.x - 8}" y="${p.y - 12}" width="${p.w + 16}" height="${p.h + 24}" rx="10" fill="none" stroke="var(--sel)" stroke-width="2.5"/>`;
     s += shapeSvg(st.type, p.x, p.y, p.w, p.h, colorable(st) ? st.color : "");
     // 「ツール・手段を表示」中（o.info）は、使用システム・ツール・手段を内容の下に小さく 1 行出す（内容は 2 行まで）。判断・開始・終了は狭いので出さない
@@ -208,8 +225,7 @@ function diagramBodySvg(f, L, W, H, o){
   edges.forEach(E => {
     if (!E.label) return;
     s += ui ? `<g class="elabel" data-edge="${esc(E.s.id)}" data-k="${edgeKey(E)}"><title>${esc(E.label.t + "\nダブルクリックで条件を編集")}</title>` : "<g>";
-    const ed = edgeDf(E);
-    s += labelSvg(E, hot(E) ? "var(--sel)" : DIFF_COLOR[ed] ? `var(${DIFF_COLOR[ed]})` : "var(--line-strong)") + `</g>`;
+    s += labelSvg(E, labelColor(E, df, hot(E))) + `</g>`;
   });
   // 課題の吹き出し。ステップとは短い線でつなぐ。文を省いたものは、マウスを乗せる・選ぶと全文の吹き出しを一番手前に重ねる（co-pop）
   const coBody = (c, y, h, lines) => {
@@ -222,6 +238,8 @@ function diagramBodySvg(f, L, W, H, o){
   L.callouts.forEach(c => {
     s += `<g class="callout" data-co="${esc(c.id)}" aria-hidden="true"><path class="co-stem" d="M${c.ax} ${c.ay}V${c.stemY}"${ui ? "" : ' fill="none" stroke="var(--bad)" stroke-width="1.6"'}/><circle cx="${c.ax}" cy="${c.ay}" r="2.6" fill="var(--bad)"/>${coBody(c, c.y, c.h, c.lines)}</g>`;
   });
+  // 札はマウスを通す（下の吹き出しやステップに乗せた・押したことにする）
+  if (tags) s += `<g pointer-events="none">${tags}</g>`;
   if (!ui || o.ref) return s;
   let pops = "";
   L.callouts.filter(c => c.cut).forEach(c => {
@@ -313,6 +331,12 @@ function compareOf(f){
 }
 const cmpOn = () => !!S.cmp && S.cmpView !== "off";
 const splitOn = () => !!S.cmp && S.cmpView === "split";
+/* 並べたときに AsIs の側に出すフロー f。ふだんは比較元の写し。写しの後に比較元が変わっていて「今の版」を選んだとき（now）は今の比較元で、
+   d に写しから今の比較元への差分（diffFlows）を持たせる。図の枠と札・ツールチップ・「全体」で同じものを使う */
+function refView(){
+  const cp = S.flow.compare, now = !!(S.refNow && S.cmp.base && S.cmp.ups.length);
+  return now ? { now, f: S.cmp.base, d: diffFlows(cp.snapshot, S.cmp.base) } : { now, f: { name: S.cmp.base?.name || "比較元", lanes: cp.snapshot.lanes, steps: cp.snapshot.steps } };
+}
 // 図に重ねる差分（diagramBodySvg の o.diff）。side：tobe＝差分の後の側 / ref＝前の側（写し）
 function diffOpt(d, side){
   const dim = S.cmpDim;
@@ -698,9 +722,9 @@ function drawCanvas(){
 }
 /* AsIs と並べる。AsIs（比較元の写し。「今の版」では今の比較元）は操作できない図（ref-diagram）にし、ToBe はふだんどおり編集できる */
 function splitHtml(){
-  const cp = S.flow.compare, now = S.refNow && S.cmp.base && S.cmp.ups.length;
-  const F = now ? S.cmp.base : { name: S.cmp.base?.name || "比較元", lanes: cp.snapshot.lanes, steps: cp.snapshot.steps };
-  const diff = now ? diffOpt(diffFlows(cp.snapshot, S.cmp.base), "tobe") : diffOpt(S.cmp.d, "ref");
+  const { now, f: F, d } = refView();
+  // 写し：ToBe でどうなったかを示す /「今の版」：写しの後に比較元がどう変わったかを示す
+  const diff = now ? diffOpt(d, "tobe") : diffOpt(S.cmp.d, "ref");
   const sw = S.cmp.base && S.cmp.ups.length ? `<span class="mini-seg" role="group" aria-label="AsIs の版"><button data-refnow="0" aria-pressed="${!now}">写し</button><button data-refnow="1" aria-pressed="${!!now}">今の版</button></span>` : "";
   const ref = diagramHtml("ref-diagram", F, diagramLayout(F), false, { ref: true, info: S.showInfo, diff });
   return `<div class="cmp-split ${S.cmpOrient}"><section class="cmp-pane"><div class="cmp-h"><span class="ftag asis">AsIs</span><span class="nm">${esc(F.name)}</span>${sw}</div>${ref}</section>`
@@ -708,7 +732,7 @@ function splitHtml(){
 }
 function updateHint(){
   const h = $("#canvasHint"); h.hidden = !S.flow;
-  // 選んでいるものに合わせて、主な操作だけを短く出す（細かい操作は README）
+  // 選んでいるものに合わせて、主な操作だけを短く出す（細かい操作は 使い方.md）
   h.innerHTML = S.selEdge?.rel
     ? `両端の丸をドラッグしてつなぎ替え・相手のステップから引き直すと向きが逆になる・<kbd>Delete</kbd> で削除`
     : S.selEdge
@@ -1032,9 +1056,9 @@ $("#canvas").addEventListener("click", ev => {
   const g = ev.target.closest("[data-step]");
   // 選択中のステップをもう一度クリックしても描き直さない（ダブルクリックで編集できるように）
   if (g){ if (g.dataset.step !== S.selected) select(g.dataset.step); else if (S.tab !== "edit" && S.tab !== "cmp") showTab("edit"); return; }
-  // 並べた AsIs のステップ：対応する ToBe のステップを選ぶ（なければ比較タブで削除の項目を開く）
-  const rf = ev.target.closest("[data-ref]");
-  if (rf){ const t = tobeOf(rf.dataset.ref); if (t.length) select(t[0]); else { cmpOpen = "r:" + rf.dataset.ref; showTab("cmp"); } return; }
+  // 並べた AsIs のステップ（とその課題の吹き出し）：対応する ToBe のステップを選ぶ（なければ比較タブで削除の項目を開く）
+  const rf = ev.target.closest("[data-ref], .ref-diagram [data-co]");
+  if (rf){ const rid = rf.dataset.ref ?? rf.dataset.co, t = tobeOf(rid); if (t.length) select(t[0]); else { cmpOpen = "r:" + rid; showTab("cmp"); } return; }
   const rn = ev.target.closest("[data-refnow]"); if (rn){ setRefNow(rn.dataset.refnow === "1"); drawCanvas(); return; }
   // 課題の吹き出し：そのステップを選ぶ
   const co = ev.target.closest("[data-co]"); if (co){ if (co.dataset.co !== S.selected) select(co.dataset.co); else if (S.tab !== "edit") showTab("edit"); return; }
@@ -1056,23 +1080,25 @@ $("#canvas").addEventListener("keydown", ev => {
 $("#canvas").addEventListener("dblclick", ev => {
   if (!S.flow) return;
   const g = ev.target.closest("[data-step]"); if (g){ ev.preventDefault(); editStepInline(g.dataset.step); return; }
-  // 課題の吹き出しをダブルクリック：編集エリアの課題の欄で書き直す
-  const co = ev.target.closest("[data-co]"); if (co){ ev.preventDefault(); editIssue(co.dataset.co); return; }
+  // 課題の吹き出しをダブルクリック：編集エリアの課題の欄で書き直す（並べた AsIs の吹き出しは編集できない）
+  const co = ev.target.closest("[data-co]"); if (co){ ev.preventDefault(); if (!co.closest(".ref-diagram")) editIssue(co.dataset.co); return; }
   const e = ev.target.closest("[data-edge]");
   // 関連（点線）には条件を書かない
   if (e && refOf(e.dataset.edge, e.dataset.k).rel){ toast("関連の線には条件を書けません"); return; }
   if (e) editEdgeInline(e.dataset.edge, +e.dataset.k, e.classList.contains("ehit") ? toSvg(ev.clientX, ev.clientY) : null);
 });
 // マウスを乗せた・キーボードで選んだステップや矢印に出入りする矢印と、その条件ラベルを強調する。
-// 描き直さずにクラスだけ付け替える（描き直すとダブルクリックやフォーカスが途切れるため）
+// 描き直さずにクラスだけ付け替える（描き直すとダブルクリックやフォーカスが途切れるため）。
+// 並べているときは図が 2 つある（ToBe：.diagram / AsIs：.ref-diagram）。ToBe は AsIs のステップ ID を引き継ぐので、
+// ToBe の強調は .diagram の中だけで探す（AsIs の矢印まで拾って ToBe の図へ移さないように）。AsIs の吹き出しは AsIs のステップとして扱う
 const hovKey = el => {
   const g = el?.closest?.("#canvas [data-step]"); if (g) return "step\n" + g.dataset.step;
-  const rf = el?.closest?.("#canvas [data-ref]"); if (rf) return "ref\n" + rf.dataset.ref;
+  const rf = el?.closest?.("#canvas [data-ref], #canvas .ref-diagram [data-co]"); if (rf) return "ref\n" + (rf.dataset.ref ?? rf.dataset.co);
   const co = el?.closest?.("#canvas [data-co]"); if (co) return "step\n" + co.dataset.co;
   const e = el?.closest?.("#canvas .ehit, #canvas .elabel"); return e ? "edge\n" + e.dataset.edge + "\n" + e.dataset.k : null;
 };
 function applyHover(){
-  const c = $("#canvas"), key = hovMouse || hovFocus;
+  const c = $("#canvas"), key = hovMouse || hovFocus, d = c.querySelector(".diagram"), rd = c.querySelector(".ref-diagram");
   c.querySelectorAll(".hv").forEach(el => el.classList.remove("hv"));
   const busy = ["dragging", "linking", "reattaching", "panning"].some(k => c.classList.contains(k));
   const [kind, id, k] = key && !busy ? key.split("\n") : [];
@@ -1081,18 +1107,19 @@ function applyHover(){
   // 並べているときは、AsIs と ToBe の対応するステップを一緒に強調する
   if (splitOn() && (kind === "step" || kind === "ref")){
     const [refs, steps] = kind === "step" ? [refOfStep(id), []] : [[id], tobeOf(id)];
-    refs.forEach(r => c.querySelectorAll(`[data-ref="${CSS.escape(r)}"]`).forEach(el => el.classList.add("hv")));
-    steps.forEach(t => c.querySelectorAll(`[data-step="${CSS.escape(t)}"]`).forEach(el => el.classList.add("hv")));
+    refs.forEach(r => rd?.querySelectorAll(`[data-ref="${CSS.escape(r)}"], [data-co="${CSS.escape(r)}"]`).forEach(el => el.classList.add("hv")));
+    steps.forEach(t => d?.querySelectorAll(`[data-step="${CSS.escape(t)}"]`).forEach(el => el.classList.add("hv")));
     if (kind === "ref") return;
   }
+  if (!d) return;
   // ステップと、その課題の吹き出しを一緒に強調する（どちらに乗せても、どれとどれが対応しているかわかるように）
-  if (kind === "step") c.querySelectorAll(`[data-step="${CSS.escape(id)}"], [data-co="${CSS.escape(id)}"]`).forEach(el => el.classList.add("hv"));
-  const paths = [...c.querySelectorAll("path.edge")].filter(p => kind === "step" ? p.dataset.s === id || p.dataset.t === id : p.dataset.s === id && p.dataset.k === k);
+  if (kind === "step") d.querySelectorAll(`[data-step="${CSS.escape(id)}"], [data-co="${CSS.escape(id)}"]`).forEach(el => el.classList.add("hv"));
+  const paths = [...d.querySelectorAll("path.edge")].filter(p => kind === "step" ? p.dataset.s === id || p.dataset.t === id : p.dataset.s === id && p.dataset.k === k);
   const keys = new Set(paths.map(p => p.dataset.s + "\n" + p.dataset.k));
   paths.forEach(p => p.classList.add("hv"));
-  c.querySelectorAll(".elabel").forEach(l => keys.has(l.dataset.edge + "\n" + l.dataset.k) && l.classList.add("hv"));
+  d.querySelectorAll(".elabel").forEach(l => keys.has(l.dataset.edge + "\n" + l.dataset.k) && l.classList.add("hv"));
   // 強調した矢印はほかの矢印より手前へ（選択中の矢印と当たり判定よりは奥）
-  const ref = c.querySelector("path.edge.hot") || c.querySelector(".ehit");
+  const ref = d.querySelector("path.edge.hot") || d.querySelector(".ehit");
   paths.forEach(p => p.classList.contains("hot") || ref?.before(p));
 }
 /* 補足と課題のツールチップ。マウスを乗せた（キーボードで選んだ）ステップのすぐ下に、補足→課題の順で出す */
@@ -1102,21 +1129,21 @@ const TIP_ICON = {
   info: `<svg viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="1" width="12" height="12" rx="3" fill="var(--surface)" stroke="var(--muted)" stroke-width="1.2"/><path d="M4 5h3.5M4 9h3.5M9 3.5 11 5 9 6.5M9 7.5 11 9 9 10.5" fill="none" stroke="var(--muted)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`
 };
 let tipId = null;
-// ref：並べた AsIs のステップ（data-ref）
+// ref：並べた AsIs のステップ（data-ref）。差分は図の枠と札に合わせ、写しなら ToBe でどうなったか、「今の版」なら写しからどう変わったかを出す
 function showTip(id, ref){
   const tip = $("#stepTip");
-  const F = ref ? (S.refNow && S.cmp?.base && S.cmp.ups.length ? S.cmp.base : S.flow?.compare?.snapshot) : S.flow;
+  const rv = ref && S.cmp && S.flow?.compare ? refView() : null, F = ref ? rv?.f : S.flow;
   const st = id && F ? F.steps.find(s => s.id === id) : null;
   // 課題を吹き出しで出しているときは、ツールチップには補足だけを出す
   const issue = st && (ref || !(S.lastL?.callouts.some(c => c.id === id))) ? st.issue : "";
-  const dl = st && cmpOn() ? (ref ? refDiffLines(id) : diffLines(S.cmp.d.steps.get(id))) : [];
+  const dl = st && cmpOn() ? (ref ? (rv.now ? diffLines(rv.d.steps.get(id)) : refDiffLines(id)) : diffLines(S.cmp.d.steps.get(id))) : [];
   const g = st && (st.note || issue || hasTool(st) || dl.length) && !inlineEd ? $("#canvas").querySelector(`[data-${ref ? "ref" : "step"}="${CSS.escape(id)}"] .shape`) : null;
   if (!g){ tip.hidden = true; tipId = null; return; }
-  if (tipId !== id + "\n" + !!issue + "\n" + !!ref){
-    tipId = id + "\n" + !!issue + "\n" + !!ref;
+  if (tipId !== id + "\n" + !!issue + "\n" + !!ref + "\n" + !!rv?.now){
+    tipId = id + "\n" + !!issue + "\n" + !!ref + "\n" + !!rv?.now;
     const sec = (cls, label, body) => `<div class="tt-sec ${cls}"><div class="tt-h">${TIP_ICON[cls.slice(3)] || ""}${label}</div>${body}</div>`, txt = t => `<div class="tt-b">${esc(t)}</div>`;
-    const ch = ref ? S.flow.removed?.find(r => r.id === id) : st.change;
-    tip.innerHTML = (dl.length ? sec("tt-diff", ref ? "ToBe では" : "AsIs から", dl.map(l => txt(l)).join("") + (ch?.kind || ch?.reason ? txt([KINDS[ch.kind], ch.reason].filter(Boolean).join("：")) : "")) : "")
+    const ch = !ref ? st.change : rv.now ? null : S.flow.removed?.find(r => r.id === id);
+    tip.innerHTML = (dl.length ? sec("tt-diff", !ref ? "AsIs から" : rv.now ? "写しから" : "ToBe では", dl.map(l => txt(l)).join("") + (ch?.kind || ch?.reason ? txt([KINDS[ch.kind], ch.reason].filter(Boolean).join("：")) : "")) : "")
       + (st.note ? sec("tt-note", "補足", txt(st.note)) : "") + (issue ? sec("tt-issue", "課題", txt(issue)) : "") + (hasTool(st) ? sec("tt-info", TOOL_NAME, txt(st.tool.trim())) : "");
   }
   // 図の見えている範囲から外れたステップには出さない
@@ -1153,7 +1180,7 @@ function fitZoom(){
   let w = Math.max(L.width, 420), h = L.height, cw = c.clientWidth - 34, ch = c.clientHeight - 42;
   // 並べているときは 2 つの図が入るように（見出しと間のすき間の分は、拡大率によらず引く）
   if (splitOn()){
-    const R = diagramLayout(S.flow.compare.snapshot), rw = Math.max(R.width, 420);
+    const R = diagramLayout(refView().f), rw = Math.max(R.width, 420);
     if (S.cmpOrient === "lr"){ w += rw; cw -= 16; ch -= 30; h = Math.max(h, R.height); } else { w = Math.max(w, rw); h += R.height; ch -= 76; }
   }
   const z = Math.min(cw / w, ch / h, 1.4);
@@ -1979,7 +2006,12 @@ function renderCmp(){
   }
   const items = cmpItems(), n = cmpCounts();
   h += `<div class="sec"><div class="sec-head"><h3>変化点</h3></div><div class="dsum">${[["add", "追加", n.add], ["chg", "置換", n.rep], ["chg", "変更", n.chg], ["move", "移動", n.move], ["del", "削除", n.del]].map(([k, t, c]) => `<span>${sw(k)}${t} <b>${c}</b></span>`).join("")}</div>`;
-  if (!items.length) h += `<p class="help">AsIs から変わったところはありません。</p>`;
+  // ステップは変わらず、矢印・関連だけを足した・消したときは、図のどこに出ているかを伝える（条件の変更は、元のステップの変更として並ぶ）
+  if (!items.length){
+    const ek = new Set([...S.cmp.d.edges.target.values(), ...S.cmp.d.edges.base.values()]);
+    const where = [ek.has("add") && "足した矢印・関連は図に緑の線で", ek.has("del") && "消した矢印・関連は「並べる」の AsIs の図に赤い点線で"].filter(Boolean);
+    h += `<p class="help">${where.length ? `ステップの変化はありません。${where.join("、")}示しています。` : "AsIs から変わったところはありません。"}</p>`;
+  }
   h += `<ul class="chg-list">` + items.map(it => {
     const st = it.x ? it.x.st : "del", tags = [st, ...(it.x?.moved && st !== "move" && st !== "add" ? ["move"] : [])];
     const ch = it.x ? it.s.change : S.flow.removed?.find(r => r.id === it.s.id), open = cmpOpen === it.key;
@@ -2283,9 +2315,9 @@ function legendItems(L, multi, diff){
     const [, , w, h] = svg.getAttribute("viewBox").split(/\s+/).map(Number);
     items.push({ t, w, h, inner: svg.innerHTML });
   });
-  // 差分の色（AsIs との比較）：図に出てくるものだけ。削除したステップは図にないので、名前を並べる
+  // 差分の色（AsIs との比較）：図に出てくるものだけ（追加は、足した矢印・関連の線の色も見る）。削除したステップは図にないので、名前を並べる
   if (diff){
-    const has = k => [...diff.steps.values()].some(st => (DIFF_COLOR[st] || "") === DIFF_COLOR[k]) || (k === "move" && diff.moved.size);
+    const has = k => [...diff.steps.values()].some(st => (DIFF_COLOR[st] || "") === DIFF_COLOR[k]) || (k === "move" && diff.moved.size) || (k === "add" && [...diff.edges.values()].includes("add"));
     [["add", "追加"], ["chg", "変更・置換"], ["move", "移動"]].forEach(([k, t]) => { if (has(k)) items.push({ t, w: 22, h: 14, inner: `<rect x="2" y="1.5" width="18" height="11" rx="3" fill="var(--surface)" stroke="var(${DIFF_COLOR[k]})" stroke-width="2"/>` }); });
     const del = S.cmp.d.removed.map(b => b.label || b.id);
     if (del.length) items.push({ t: "削除：" + short(del.join("、")), w: 22, h: 14, inner: `<rect x="2" y="1.5" width="18" height="11" rx="3" fill="var(--surface)" stroke="var(--bad)" stroke-width="2" stroke-dasharray="4 2"/>` });
@@ -2423,7 +2455,8 @@ function pageSvg(f, L, P, links, i, o){
   s += `<g transform="translate(${ox} ${oy})">`;
   // 結合子の帯にもレーンの帯を伸ばしておく（本体は切り出した範囲の上に重なる）
   L.lanes.forEach((l, k) => { const y = L.laneY[k]; s += `<rect x="${xa}" y="${y}" width="${xb - xa}" height="${L.laneY[k + 1] - y}" fill="${k % 2 ? "var(--lane-b)" : "var(--lane-a)"}"/>`; if (k) s += `<line x1="${xa}" x2="${xb}" y1="${y}" y2="${y}" stroke="var(--line-strong)"/>`; });
-  s += `<g clip-path="url(#pg)">${diagramBodySvg(f, { ...L, edges: links.local[i] }, Math.max(L.width, 420), H, { info: o.info, diff: o.diff ? imgDiff() : null })}</g>`;
+  const df = o.diff ? imgDiff() : null;
+  s += `<g clip-path="url(#pg)">${diagramBodySvg(f, { ...L, edges: links.local[i] }, Math.max(L.width, 420), H, { info: o.info, diff: df })}</g>`;
   // 切れ目：前の枚・次の枚へ続くことを破線で示す
   if (cl) s += `<line x1="${p.x0}" x2="${p.x0}" y1="0" y2="${H}" stroke="var(--line-strong)" stroke-dasharray="4 4"/>`;
   if (cr) s += `<line x1="${p.x1}" x2="${p.x1}" y1="0" y2="${H}" stroke="var(--line-strong)" stroke-dasharray="4 4"/>`;
@@ -2446,12 +2479,14 @@ function pageSvg(f, L, P, links, i, o){
     const leg = e.by === e.y ? [[cx - dir * r, e.y]] : [[bx + dir * 3, e.y], [bx + dir * 3, e.by], [cx - dir * r, e.by]];
     const pts = e.out ? [...e.pts, ...leg] : [...leg.reverse(), ...e.pts];
     const clean = pts.filter((q, k) => !k || q[0] !== pts[k - 1][0] || q[1] !== pts[k - 1][1]);
-    s += `<path d="${pathD(clean)}" fill="none" stroke="var(--muted)" stroke-width="1.4" ${e.c.E.assoc ? ASSOC_DASH : ""} marker-end="url(#${e.c.E.assoc ? "oar" : "arr"})"/>`;
+    // 線と条件ラベルは、図の本体と同じく差分の色にする（矢じりは本体の defs のものを使う）
+    const lk = edgeLook(e.c.E, df, false);
+    s += `<path d="${pathD(clean)}" fill="none" stroke="${lk.stroke}" stroke-width="${lk.width}" ${lk.dash} marker-end="url(#${lk.marker})"/>`;
     marks += `<circle cx="${cx}" cy="${e.by}" r="${r}" fill="var(--surface)" stroke="var(--ink)" stroke-width="1.3"/><text x="${cx}" y="${e.by + 0.5}" text-anchor="middle" dominant-baseline="middle" font-size="10.5" font-weight="700" fill="var(--ink)">${e.c.letter}</text>`;
     marks += `<text x="${cx}" y="${e.by + r + 8}" text-anchor="middle" dominant-baseline="middle" font-size="8.5" fill="var(--muted)">${(e.out ? e.c.pt : e.c.ps) + 1}枚目${e.out ? "へ" : "から"}</text>`;
     // 条件ラベルは、ラベルの位置が入る枚にだけ描く（切れ目はラベルを横切らないので、どちらか一方に入る）
     const E = e.c.E;
-    if (E.label && E.lp && E.lp[0] >= p.x0 && E.lp[0] <= p.x1) labels += `<g>${labelSvg(E, "var(--line-strong)")}</g>`;
+    if (E.label && E.lp && E.lp[0] >= p.x0 && E.lp[0] <= p.x1) labels += `<g>${labelSvg(E, labelColor(E, df, false))}</g>`;
   });
   s += marks + labels + `</g>`;
   // 全体の枠と、レーン名の列（一番手前）
