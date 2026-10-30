@@ -739,7 +739,7 @@ function updateHint(){
     ? `<b>＋</b> で間にステップを入れる・両端の丸をドラッグしてつなぎ替え・ダブルクリックで条件を編集・<kbd>Delete</kbd> で削除`
     : S.selected
     ? `<b>＋</b> で種類を選んで次のステップを追加（ドラッグで別のステップとつなぐ）・<kbd>Enter</kbd> で文言を編集・<kbd>Delete</kbd> で削除`
-    : `クリックで選択・ダブルクリックで文言を編集・ドラッグで移動`;
+    : `クリックで選択・ダブルクリックで文言を編集・ドラッグで移動・空いた所をダブルクリックでステップを追加`;
 }
 // 選択したステップが画面の外なら、見える位置までスクロールする（左のレーン名の列は避ける）
 function revealStep(id){
@@ -802,15 +802,9 @@ function colorField(s){
   const sw = (k, name) => `<button type="button" class="swatch${(s.color || "") === k ? " on" : ""}" data-act="color" data-color="${k}" aria-pressed="${(s.color || "") === k}" title="${name}" aria-label="色：${name}"${k ? ` style="background:var(--c-${k})"` : ""}>${k ? "" : "なし"}</button>`;
   return `<div class="field"><span class="lbl">色（任意）</span><div class="swatches">${sw("", "なし")}${Object.entries(COLORS).map(([k, v]) => sw(k, v)).join("")}</div></div>`;
 }
-/* 「ツール・つながり」の欄（使用システム・ツール・手段、次のステップ、関連）。つながりはふだん図で編集するのでたたんでおき、
-   一度開いたら、ほかのステップを選んでも開いたままにする */
-let infoOpen = false;
-$("#tab-edit").addEventListener("toggle", ev => { if (ev.target.matches?.(".info-sec")) infoOpen = ev.target.open; }, true);
 function renderForm(){
   if (!S.flow) return;
   const laneOpts = cur => S.flow.lanes.map(l => `<option value="${esc(l.id)}" ${l.id === cur ? "selected" : ""}>${esc(l.name)}</option>`).join("") + (S.flow.lanes.some(l => l.id === cur) ? "" : `<option value="${esc(cur)}" selected>（未設定：${esc(cur || "なし")}）</option>`);
-  // flow：流れのつなぎ先の候補（帳票・データは出さない）
-  const stepOpts = (cur, self, flow) => `<option value="">— 選択 —</option>` + S.flow.steps.filter(s => (s.id !== self && !(flow && isArtifact(s))) || s.id === cur).map(s => `<option value="${esc(s.id)}" ${s.id === cur ? "selected" : ""}>${esc(s.id)}：${esc(s.label || "（未記入）")}</option>`).join("") + (cur && !S.flow.steps.some(s => s.id === cur) ? `<option value="${esc(cur)}" selected>${esc(cur)}（存在しません）</option>` : "");
   let g = `<div class="sec"><div class="sec-head"><h3>基本情報</h3></div>
     <div class="field"><label for="fOwner">管理部署</label><input class="inp" id="fOwner" data-meta="owner" value="${esc(S.flow.owner)}" placeholder="例：経理部"></div>
     <div class="field"><label for="fDesc">説明</label><textarea class="inp" id="fDesc" data-meta="description" rows="2" placeholder="このフローの目的や適用範囲">${esc(S.flow.description)}</textarea></div></div>`;
@@ -822,52 +816,39 @@ function renderForm(){
   if (!S.flow.lanes.length) g += `<p class="help">担当がありません。「＋ 担当を追加」で部署や役割を追加してください。</p>`;
   g += `</div>`;
   g += `<div class="sec"><div class="sec-head"><h3>このフローの管理</h3></div><div class="row" style="flex-wrap:wrap">
-    <button class="btn sm" data-act="tobe">ToBe を作る</button><button class="btn sm" data-act="dup">複製</button><button class="btn sm danger" data-act="flow-del">このフローを削除</button></div></div>`;
+    <button class="btn sm" data-act="tobe">ToBe を作る</button><button class="btn sm" data-act="dup">複製</button><button class="btn sm danger" data-act="flow-del">このフローを削除</button></div>
+    <div class="row" style="flex-wrap:wrap"><button class="btn sm ghost" data-act="sort-flow" title="YAML のステップの並びを、図の左から右、上から下の順にします">ステップを図の順に並べる</button>${linkedFlow() ? "" : `<button class="btn sm ghost" data-act="renumber" title="図の順に並べてから、IDを 1 から振り直します。つながりも自動で書き換えます">IDを振り直す</button>`}</div></div>`;
   $("#tab-setup").innerHTML = g;
-  let h = `<div class="sec"><div class="sec-head"><h3>ステップ</h3><button class="btn sm" data-act="step-add">＋ ステップを追加</button></div>
-    <div class="step-tools"><button class="btn sm ghost" data-act="sort-flow" title="図の左から右、上から下の順に並べ替えます">図の順に並べる</button>${linkedFlow() ? "" : `<button class="btn sm ghost" data-act="renumber" title="今の並び順でIDを 1 から振り直します。つながりも自動で書き換えます">IDを振り直す</button>`}</div>`;
-  S.flow.steps.forEach(s => {
+  // ステップの一覧は出さない。「ステップを探す」欄の下に、図で選んだステップの詳細だけを出す（追加は図の空いた所のダブルクリック・右クリック）
+  let h = `<div class="sec"><div class="find"><input class="inp" type="search" id="stepFind" placeholder="ステップを探す（内容・ID・担当）" aria-label="ステップを探す" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="false" aria-controls="stepFindList" aria-autocomplete="list"><ul class="find-list" id="stepFindList" role="listbox" aria-label="見つかったステップ" hidden></ul></div>`;
+  const s = curStep();
+  if (!s) h += `<p class="help">${S.flow.steps.length ? "図でステップを選ぶと、ここに詳細が出ます。" : "まだステップがありません。"}図の担当（レーン）の空いた所をダブルクリック（または右クリック）すると、そこにステップを追加できます。</p>`;
+  else {
     const laneName = S.flow.lanes.find(l => l.id === s.lane)?.name || "担当未設定";
-    const isOpen = s.id === S.selected;
-    h += `<div class="step ${isOpen ? "open" : ""}" data-stepcard="${esc(s.id)}">
-      <button class="step-sum" data-act="select" data-id="${esc(s.id)}" aria-expanded="${isOpen}">${typeIcon(s.type, s.color)}<span class="lb"><span class="tag">${esc(s.id)}</span> ${esc(s.label || "（未記入）")} <span data-flag="${esc(s.id)}">${flagOf(s.id)}</span></span><span class="ln">${esc(laneName)}</span></button>`;
-    if (isOpen){
-      h += `<div class="step-body">
+    h += `<div class="step open" data-stepcard="${esc(s.id)}">
+      <div class="step-sum">${typeIcon(s.type, s.color)}<span class="lb"><span class="tag">${esc(s.id)}</span> ${esc(s.label || "（未記入）")} <span data-flag="${esc(s.id)}">${flagOf(s.id)}</span></span><span class="ln">${esc(laneName)}</span></div>`;
+    h += `<div class="step-body">
         <div class="field"><label for="sl-${esc(s.id)}">内容</label><input class="inp" id="sl-${esc(s.id)}" data-sf="label" value="${esc(s.label)}" placeholder="例：申請書を作成"></div>
         <div class="grid2"><div class="field"><label for="st-${esc(s.id)}">種類</label><select class="inp" id="st-${esc(s.id)}" data-sf="type">${Object.entries(TYPES).map(([k, v]) => `<option value="${k}" ${k === s.type ? "selected" : ""}>${v}</option>`).join("")}</select></div>
         <div class="field"><label for="sn-${esc(s.id)}">担当</label><select class="inp" id="sn-${esc(s.id)}" data-sf="lane">${laneOpts(s.lane)}</select></div></div>
-        ${colorField(s)}
         ${s.col || s.row ? `<div class="row"><span class="help">図の位置：${[s.col ? `左から ${s.col} 列目` : "", s.row ? `上から ${(S.lastL?.pos.get(s.id)?.t ?? s.row - 1) + 1} 段目` : ""].filter(Boolean).join("・")}に固定（図でドラッグして指定）</span><button class="btn sm ghost" data-act="col-auto">位置を自動に戻す</button></div>` : ""}
-        <div class="field"><label for="so-${esc(s.id)}">補足（帳票名・期限・ルールなど）</label><textarea class="inp" id="so-${esc(s.id)}" data-sf="note" rows="2">${esc(s.note)}</textarea></div>
-        <div class="field"><label for="si-${esc(s.id)}">課題（問題点・改善したい点）</label><textarea class="inp issue-inp" id="si-${esc(s.id)}" data-sf="issue" rows="2" placeholder="例：紙の書類を目視で確認しており時間がかかる">${esc(s.issue)}</textarea></div>
+        <div class="field"><label for="so-${esc(s.id)}">補足（帳票名・期限・ルールなど）</label><textarea class="inp" id="so-${esc(s.id)}" data-sf="note" rows="3">${esc(s.note)}</textarea></div>
+        <div class="field"><label for="si-${esc(s.id)}">課題（問題点・改善したい点）</label><textarea class="inp issue-inp" id="si-${esc(s.id)}" data-sf="issue" rows="3" placeholder="例：紙の書類を目視で確認しており時間がかかる">${esc(s.issue)}</textarea></div>
 `;
-      const rel = s.related || [], free = S.flow.steps.filter(x => x.id !== s.id && !relates(s, x.id) && !s.next.some(e => e.to === x.id));
-      // たたんでいても中身がわかるよう、見出しの右に書いてあるものを短く出す
-      const peek = [hasTool(s) ? "ツールあり" : "", s.next.length ? `次 ${s.next.length}` : "", rel.length ? `関連 ${rel.length}` : ""].filter(Boolean).join("・") || "なし";
-      h += `<details class="info-sec" ${infoOpen ? "open" : ""}><summary>ツール・つながり<span class="peek">${peek}</span></summary>
-        <div class="field"><label for="sx-tool-${esc(s.id)}">${TOOL_NAME}（任意）</label><textarea class="inp info-inp" id="sx-tool-${esc(s.id)}" data-sf="tool" rows="1" placeholder="例：Excel・基幹システム・メール">${esc(s.tool)}</textarea></div>`;
-      // 帳票・データは流れに入れない（ほかのステップとは関連で結ぶ）ので、次のステップの欄は出さない。流れのつなぎ先にも帳票・データは出さない
-      if (!isArtifact(s)){
-      h += `<div class="field"><span class="lbl">次のステップ${s.type === "decision" ? "（分岐ごとに条件を書く）" : ""}</span>`;
-      s.next.forEach((e, k) => {
-        h += `<div class="next-row"><select class="inp" id="nx-${esc(s.id)}-${k}" data-nx="${k}" data-nf="to" aria-label="つなぎ先">${stepOpts(e.to, s.id, true)}</select><input class="inp${labelCut(e.when) ? " cut" : ""}" id="nw-${esc(s.id)}-${k}" data-nx="${k}" data-nf="when" value="${esc(e.when)}"${labelCut(e.when) ? ` title="${CUT_TIP}"` : ""} placeholder="${s.type === "decision" ? "条件（例：承認）" : "条件（任意）"}" aria-label="条件"><button class="mini" data-act="next-del" data-k="${k}" aria-label="このつながりを削除">✕</button></div>`;
-      });
-      if (!s.next.length) h += `<p class="help" style="margin:0">${s.type === "end" ? "終了ステップなので次はありません。" : "まだつながっていません。"}</p>`;
-      h += `<div class="row"><button class="btn sm" data-act="next-add">＋ つながりを追加</button></div></div>`;
-      }
-      // 関連（点線）：流れとは別に、このステップで作る・使う帳票などと結ぶ。ここでは相手だけを選ぶ（条件はない。辺は図で端をドラッグして指定する）
-      h += `<div class="field"><span class="lbl">${isArtifact(s) ? `関連（点線。この${TYPES[s.type]}を作る・使うステップ）` : "関連（点線。このステップで作る・使う帳票・データなど）"}</span>`;
-      rel.forEach(({ to }, k) => { h +=`<div class="next-row rel-row"><select class="inp" id="rx-${esc(s.id)}-${k}" data-rx="${k}" aria-label="関連の相手">${stepOpts(to, s.id)}</select><button class="mini" data-act="rel-del" data-k="${k}" aria-label="この関連を削除">✕</button></div>`; });
-      h += `<div class="next-row rel-row"><select class="inp" id="rx-${esc(s.id)}-new" data-rx="new" aria-label="関連を追加"><option value="">＋ 関連を追加…</option>${free.map(x => `<option value="${esc(x.id)}">${esc(x.id)}：${esc(x.label || "（未記入）")}</option>`).join("")}</select><span></span></div></div></details>
+    h += `<div class="field"><label for="sx-tool-${esc(s.id)}">${TOOL_NAME}（任意）</label><textarea class="inp info-inp" id="sx-tool-${esc(s.id)}" data-sf="tool" rows="1" placeholder="例：Excel・基幹システム・メール">${esc(s.tool)}</textarea></div>`;
+    // 次のステップ（流れの矢印）・関連（点線）は図の上でつなぐ・外す（条件も図で書く）ので、ここには出さない
+    h += `${colorField(s)}
         <div class="step-actions">
           <button class="btn sm danger" data-act="step-del">削除</button>
-        </div></div>`;
-    }
-    h += `</div>`;
-  });
-  if (!S.flow.steps.length) h += `<p class="help">「＋ ステップを追加」で最初のステップをつくると、図に表示されます。</p>`;
+        </div></div></div>`;
+  }
   h += `</div>`;
   $("#tab-edit").innerHTML = h;
+}
+// ステップを図の順（左の列から、同じ列は上の段から）に並べた写し。YAML の並べ替え・IDの振り直し・手順書の表で使う
+function byDiagram(f){
+  const P = layout(f, null, true).pos, key = st => { const p = P.get(st.id); return p ? p.c * 1000 + p.r : 1e9; };
+  return f.steps.slice().sort((a, b) => key(a) - key(b));
 }
 // AsIs／ToBe の比較でほかのフローとつながっている（ID を振り直すと、ステップの対応が崩れる）
 const linkedFlow = () => !!S.flow.compare || (!!S.flow.id && allFlows().some(x => x.f.compare?.base === S.flow.id));
@@ -880,6 +861,44 @@ function updateFlags(){
   });
 }
 const curStep = () => S.flow.steps.find(s => s.id === S.selected);
+/* 「ステップを探す」欄：内容・ID・担当名に入れた文字を含むステップを図の順に出す。選ぶと図のそのステップを選び、見える所まで動かす。
+   ↑↓ で候補を動かし、Enter・クリックで決める。Esc で欄を空にする。入力欄の外の Ctrl+F でこの欄に移る */
+let findAt = 0;
+function findHits(q){
+  q = q.trim().toLowerCase(); if (!q) return [];
+  const laneName = id => S.flow.lanes.find(l => l.id === id)?.name || "";
+  return byDiagram(S.flow).filter(s => [s.id, s.label, laneName(s.lane)].some(v => String(v || "").toLowerCase().includes(q)));
+}
+function showFind(){
+  const inp = $("#stepFind"), ul = $("#stepFindList"); if (!inp) return;
+  const hits = document.activeElement === inp ? findHits(inp.value) : [], open = document.activeElement === inp && !!inp.value.trim();
+  findAt = Math.max(0, Math.min(findAt, hits.length - 1));
+  ul.hidden = !open; inp.setAttribute("aria-expanded", String(open));
+  ul.innerHTML = hits.map((s, k) => `<li role="option" id="find-${k}" data-find="${esc(s.id)}" aria-selected="${k === findAt}">${typeIcon(s.type, s.color)}<span class="lb"><span class="tag">${esc(s.id)}</span> ${esc(s.label || "（未記入）")} ${flagOf(s.id)}</span><span class="ln">${esc(S.flow.lanes.find(l => l.id === s.lane)?.name || "担当未設定")}</span></li>`).join("")
+    || `<li class="none">見つかりません</li>`;
+  if (hits.length){ inp.setAttribute("aria-activedescendant", "find-" + findAt); $("#find-" + findAt).scrollIntoView({ block: "nearest" }); }
+  else inp.removeAttribute("aria-activedescendant");
+}
+function goFind(id){ select(id); focusNode(id); }
+function openFind(){
+  if ($(".body").classList.contains("focus")) $("#focusBtn").click();
+  if (S.tab !== "edit") showTab("edit");
+  const inp = $("#stepFind"); if (!inp) return;
+  inp.scrollIntoView({ block: "nearest" }); inp.focus(); inp.select();
+}
+$("#tab-edit").addEventListener("input", ev => { if (ev.target.id === "stepFind"){ findAt = 0; showFind(); } });
+$("#tab-edit").addEventListener("focusin", ev => { if (ev.target.id === "stepFind") showFind(); });
+$("#tab-edit").addEventListener("focusout", ev => { if (ev.target.id === "stepFind") showFind(); });
+$("#tab-edit").addEventListener("keydown", ev => {
+  const inp = ev.target; if (inp.id !== "stepFind") return;
+  const hits = findHits(inp.value);
+  if ((ev.key === "ArrowDown" || ev.key === "ArrowUp") && hits.length){ ev.preventDefault(); findAt = (findAt + (ev.key === "ArrowDown" ? 1 : -1) + hits.length) % hits.length; showFind(); }
+  else if (ev.key === "Enter" && hits[findAt]){ ev.preventDefault(); goFind(hits[findAt].id); }
+  else if (ev.key === "Escape" && inp.value){ ev.preventDefault(); ev.stopPropagation(); inp.value = ""; showFind(); }
+});
+// 候補を押しても欄からフォーカスを外さない（外すと候補が消えてクリックが届かない）
+$("#tab-edit").addEventListener("mousedown", ev => { if (ev.target.closest("#stepFindList")) ev.preventDefault(); });
+$("#tab-edit").addEventListener("click", ev => { const li = ev.target.closest("[data-find]"); if (li) goFind(li.dataset.find); });
 
 function select(id, scroll){
   setSelected(id); setSelEdge(null); renderForm(); drawCanvas(); revealStep(id);
@@ -919,7 +938,6 @@ onPanels("input", ev => {
   if (t.dataset.lane != null){ S.flow.lanes[+t.dataset.lane].name = t.value; commit(); return; }
   const s = curStep(); if (!s) return;
   if (t.dataset.sf === "label" || t.dataset.sf === "note" || t.dataset.sf === "issue" || t.dataset.sf === "tool"){ s[t.dataset.sf] = t.value; commit(); return; }
-  if (t.dataset.nf === "when"){ s.next[+t.dataset.nx].when = t.value; markCut(t); commit(); }
 });
 onPanels("change", ev => {
   const t = ev.target; if (!S.flow) return;
@@ -928,15 +946,6 @@ onPanels("change", ev => {
   // 流れの途中のステップを帳票・データに変えたら、前後の流れをつなぎ直す（toArtifact）
   if (t.dataset.sf === "type"){ if (toArtifact(S.flow, s.id, t.value)) toast("前後のステップを矢印でつなぎ直し、この" + TYPES[t.value] + "は前のステップと関連（点線）で結びました"); if (!colorable(s)) delete s.color; commit({ form: true }); }
   else if (t.dataset.sf === "lane"){ s.lane = t.value; commit({ form: true }); }
-  else if (t.dataset.nf === "to"){ const e = s.next[+t.dataset.nx]; e.to = t.value; delete e.entry; delete e.entryAt; if (!t.value) s.next.splice(+t.dataset.nx, 1); commit({ form: true }); }
-  else if (t.dataset.rx != null){
-    // 相手を変えたら、相手側の辺の指定は外す（流れのつなぎ先を変えたときと同じ）
-    const rel = s.related ||= [], v = t.value, r = rel[+t.dataset.rx];
-    if (t.dataset.rx === "new"){ if (v && !relates(s, v)) rel.push({ to: v }); }
-    else if (!v || rel.some((x, k) => k !== +t.dataset.rx && x.to === v)) rel.splice(+t.dataset.rx, 1);
-    else { r.to = v; delete r.entry; delete r.entryAt; }
-    commit({ form: true });
-  }
 });
 /* 担当IDを変える。その担当に割り振っていたステップの lane もまとめて新しいIDに置き換える。
    同じIDの担当がほかにも残る場合（YAMLで重複させたとき）は、どちらの担当のステップか決められないのでステップはそのままにする。 */
@@ -963,7 +972,6 @@ onPanels("click", ev => {
   const b = ev.target.closest("[data-act]"); if (!b || !S.flow) return;
   const act = b.dataset.act, s = curStep(), i = +b.dataset.i;
   switch (act){
-    case "select": select(S.selected === b.dataset.id ? null : b.dataset.id, false); return;
     // 担当 ID も、比較でつながるフローの担当と別々に同じ ID を振らないようにする（familyIds）
     case "lane-add": { const id = uid("lane", familyIds(S.flow, allFlows().map(x => x.f), "lanes")); S.flow.lanes.push({ id, name: "新しい担当" }); commit({ form: true }); const el = $("#lane-" + CSS.escape(id)); el && (el.focus(), el.select()); return; }
     case "lane-up": [S.flow.lanes[i - 1], S.flow.lanes[i]] = [S.flow.lanes[i], S.flow.lanes[i - 1]]; break;
@@ -973,37 +981,32 @@ onPanels("click", ev => {
       if (n){ b.dataset.orig = b.textContent; if (!arm(b, "lane" + l.id, "?")) { toast(`「${l.name}」には ${n} 件のステップがあります。もう一度 ✕ で削除します`); return; } }
       S.flow.lanes.splice(i, 1); break;
     }
-    case "step-add": {
-      const id = newStepId(); const last = S.flow.steps[S.flow.steps.length - 1];
-      S.flow.steps.push({ id, type: S.flow.steps.length ? "task" : "start", lane: last?.lane || S.flow.lanes[0]?.id || "", label: "", note: "", issue: "", tool: "", related: [], next: [] });
-      setSelected(id); commit({ form: true }); focusLabel(); return;
-    }
     case "sort-flow": {
-      const L = layout(S.flow), key = st => { const p = L.pos.get(st.id); return p ? p.c * 1000 + p.r : 1e9; };
-      const before = S.flow.steps.map(x => x.id).join();
-      S.flow.steps.sort((a, b2) => key(a) - key(b2));
-      if (before === S.flow.steps.map(x => x.id).join()){ toast("すでに図の順に並んでいます"); return; }
+      const order = byDiagram(S.flow);
+      if (order.every((x, k) => x === S.flow.steps[k])){ toast("すでに図の順に並んでいます"); return; }
+      S.flow.steps.splice(0, S.flow.steps.length, ...order);
       break;
     }
+    // 図の順に並べてから振り直す（並び順は画面に出さないので、YAML の並びではなく図の順で番号を振る）
     case "renumber": {
-      const cnt = {}; S.flow.steps.forEach(x => { const m = x.id.match(/^([A-Za-z_]+)\d+$/); if (m) cnt[m[1]] = (cnt[m[1]] || 0) + 1; });
+      const order = byDiagram(S.flow);
+      const cnt = {}; order.forEach(x => { const m = x.id.match(/^([A-Za-z_]+)\d+$/); if (m) cnt[m[1]] = (cnt[m[1]] || 0) + 1; });
       const pre = Object.keys(cnt).sort((p1, p2) => cnt[p2] - cnt[p1])[0] || "s";
-      const map = new Map(S.flow.steps.map((x, k) => [x.id, pre + (k + 1)]));
-      if (S.flow.steps.every(x => map.get(x.id) === x.id)){ toast("IDはすでに並び順どおりです"); return; }
+      const map = new Map(order.map((x, k) => [x.id, pre + (k + 1)]));
+      if (order.every((x, k) => map.get(x.id) === x.id && x === S.flow.steps[k])){ toast("IDはすでに図の順どおりです"); return; }
       b.dataset.orig = "IDを振り直す"; if (!arm(b, "renum", "もう一度押して振り直す")) return;
       const r = S.records.get(S.currentId);
       if (r){ const history = (r.history || []).slice(); history.unshift({ at: Date.now(), name: S.flow.name, yaml: S.yamlSrc, memo: "ID振り直し前" }); setRecord(S.currentId, { ...r, history: history.slice(0, 20) }); }
+      S.flow.steps.splice(0, S.flow.steps.length, ...order);
       S.flow.steps.forEach(x => { x.id = map.get(x.id); [...x.next, ...(x.related || [])].forEach(e => { if (map.has(e.to)) e.to = map.get(e.to); }); });
       if (S.selected) setSelected(map.get(S.selected) || null);
-      toast(`IDを ${pre}1〜${pre}${S.flow.steps.length} に振り直しました（元の版は履歴に残しています）`); break;
+      toast(`IDを図の順に ${pre}1〜${pre}${S.flow.steps.length} に振り直しました（元の版は履歴に残しています）`); break;
     }
     case "step-del": {
       b.dataset.orig = "削除"; if (!arm(b, "step" + s.id, "もう一度押して削除")) return;
       deleteStep(s.id); commit({ form: true, select: null });
       toast("ステップを削除しました。前後のつながりは自動でつなぎ直しています（Ctrl+Z で元に戻せます）"); return;
     }
-    case "next-del": s.next.splice(+b.dataset.k, 1); break;
-    case "rel-del": s.related?.splice(+b.dataset.k, 1); break;
     case "color": if (b.dataset.color) s.color = b.dataset.color; else delete s.color; break;
     case "col-auto": delete s.col; delete s.row; break;
     case "dup": { const f = JSON.parse(JSON.stringify(S.flow)); f.name += "（コピー）"; delete f.id; create(toYaml(f)); return; }
@@ -1031,25 +1034,6 @@ onPanels("click", ev => {
   }
   commit({ form: true });
 });
-function focusLabel(){ const el = document.querySelector(`#sl-${CSS.escape(S.selected)}`); if (el){ el.focus(); el.scrollIntoView({ block: "nearest" }); } }
-
-/* fix: allow an empty "next" row to exist while choosing a target */
-(function patchNextAdd(){
-  const host = $("#tab-edit");
-  host.addEventListener("click", ev => {
-    const b = ev.target.closest('[data-act="next-add"]'); if (!b || !S.flow) return;
-    ev.stopImmediatePropagation();
-    const s = curStep(); if (!s) return;
-    const k = s.next.length;
-    const row = document.createElement("div"); row.className = "next-row";
-    const opts = `<option value="">— 選択 —</option>` + S.flow.steps.filter(x => x.id !== s.id && !isArtifact(x)).map(x => `<option value="${esc(x.id)}">${esc(x.id)}：${esc(x.label || "（未記入）")}</option>`).join("");
-    row.innerHTML = `<select class="inp" id="nx-${esc(s.id)}-new" aria-label="つなぎ先">${opts}</select><input class="inp" id="nw-${esc(s.id)}-new" placeholder="条件（任意）" aria-label="条件"><span></span>`;
-    b.parentElement.before(row);
-    const sel = row.querySelector("select"), w = row.querySelector("input");
-    sel.addEventListener("change", e => { e.stopPropagation(); if (!sel.value) return; s.next.push({ to: sel.value, when: w.value }); commit({ form: true }); });
-    sel.focus();
-  }, true);
-})();
 
 /* ---------- canvas interactions ---------- */
 $("#canvas").addEventListener("click", ev => {
@@ -1085,8 +1069,12 @@ $("#canvas").addEventListener("dblclick", ev => {
   const e = ev.target.closest("[data-edge]");
   // 関連（点線）には条件を書かない
   if (e && refOf(e.dataset.edge, e.dataset.k).rel){ toast("関連の線には条件を書けません"); return; }
-  if (e) editEdgeInline(e.dataset.edge, +e.dataset.k, e.classList.contains("ehit") ? toSvg(ev.clientX, ev.clientY) : null);
+  if (e){ editEdgeInline(e.dataset.edge, +e.dataset.k, e.classList.contains("ehit") ? toSvg(ev.clientX, ev.clientY) : null); return; }
+  // 空いた所：そこに置くステップの種類を選ぶ
+  if (addMenu(ev, false)) ev.preventDefault();
 });
+// 空いた所の右クリック：ステップの追加・貼り付け・全体を表示のメニュー（ステップや矢印の上では、ブラウザのメニューのまま）
+$("#canvas").addEventListener("contextmenu", ev => { if (addMenu(ev, true)) ev.preventDefault(); });
 // マウスを乗せた・キーボードで選んだステップや矢印に出入りする矢印と、その条件ラベルを強調する。
 // 描き直さずにクラスだけ付け替える（描き直すとダブルクリックやフォーカスが途切れるため）。
 // 並べているときは図が 2 つある（ToBe：.diagram / AsIs：.ref-diagram）。ToBe は AsIs のステップ ID を引き継ぐので、
@@ -1436,7 +1424,33 @@ function plusEdge(){
   const ref = S.selEdge; if (!ref || ref.rel || refTo(ref) == null) return;
   typeMenu(() => $("#canvas [data-eplus]")?.getBoundingClientRect(), FLOW_TYPES, type => insertOnEdge(ref, type));
 }
+/* 図の空いた所（ダブルクリック・右クリック）：その位置に置くステップの種類を選ぶメニューを出す。
+   右クリック（more）では、貼り付け・全体を表示も出す。担当（レーン）の外や「担当未設定」の仮レーンでは出さない（false を返す） */
+function addMenu(ev, more){
+  if (!S.flow || ev.target.closest(".ref-diagram, .cmp-h, .empty, [data-step], [data-edge], [data-co], [data-handle], [data-eplus], [data-end]")) return false;
+  const p = toSvg(ev.clientX, ev.clientY);
+  if (!p || p[0] < G.label || !slotAt(p[1])){
+    if (p && !S.flow.lanes.length) toast("「全体」タブで担当（レーン）を追加すると、図にステップを置けます");
+    return false;
+  }
+  const items = [{ head: "ここにステップを追加" }, "start", ...FLOW_TYPES, "end", "-", ...ART_TYPES];
+  if (more) items.push("-", ...(clip ? [{ id: "@paste", label: "ここに貼り付け" }] : []), { id: "@fit", label: "全体を表示" });
+  typeMenu(() => { const c = toClient(...p); return c && { left: c[0], top: c[1], right: c[0], bottom: c[1], width: 0, height: 0 }; }, items,
+    t => t === "@paste" ? pasteStep(p) : t === "@fit" ? fitZoom() : addAt(p, t));
+  return true;
+}
+/* 図の座標 p に、どこにもつながらない種類 type のステップを置く。置いたマスにほかのステップがいるときは、
+   その列のステップを 1 段ずつ下げる（ドラッグで置いたときと同じ） */
+function addAt(p, type){
+  const sl = slotAt(p[1]); if (!sl) return;
+  const c = colAt(p[0]), id = newStepId(), ns = blankStep(id, type, sl.lane.id);
+  // YAML では、置いた列までにあるステップの後ろに入れる（図の順に近い並びにしておく）
+  S.flow.steps.splice(S.flow.steps.findLastIndex(x => (S.lastL.pos.get(x.id)?.c ?? Infinity) <= c) + 1, 0, ns);
+  pinSlot(ns, sl.lane, { ...sl, drop: true }, c);
+  commit({ form: true, select: id }); editStepInline(id);
+}
 /* 種類を選ぶメニュー（＋から足すステップの種類）。anchor() はメニューを添える位置（画面座標の矩形）を返し、スクロールのたびに置き直す。
+   types は種類のほか、"-"（区切り）、{ head }（見出し）、{ id, label }（種類でない項目。done に id を渡す）を並べられる。
    先頭の項目（作業）にフォーカスを置き、↑↓ で動かし、Enter・クリックで決める。Esc・ほかの所を押すと閉じる */
 let typeMn = null;
 function typeMenu(anchor, types, done){
@@ -1444,7 +1458,9 @@ function typeMenu(anchor, types, done){
   if (inlineEd) inlineEd.finish(true);
   const el = document.createElement("div"), back = document.activeElement, t0 = performance.now();
   el.className = "type-menu"; el.setAttribute("role", "menu"); el.setAttribute("aria-label", "足すステップの種類");
-  el.innerHTML = types.map(t => t === "-" ? `<hr>` : `<button type="button" role="menuitem" data-type="${t}">${typeIcon(t)}<span>${TYPES[t]}</span></button>`).join("");
+  el.innerHTML = types.map(t => t === "-" ? `<hr>` : t.head ? `<p class="tm-head">${esc(t.head)}</p>`
+    : t.id ? `<button type="button" role="menuitem" data-type="${esc(t.id)}"><svg class="ticon" viewBox="0 0 22 16" aria-hidden="true"></svg><span>${esc(t.label)}</span></button>`
+    : `<button type="button" role="menuitem" data-type="${t}">${typeIcon(t)}<span>${TYPES[t]}</span></button>`).join("");
   const place = () => {
     const r = anchor(); if (!r) return false;
     const w = el.offsetWidth, h = el.offsetHeight, m = 8;
@@ -1702,14 +1718,17 @@ function copyStep(){
   clip = { type: s.type, lane: s.lane, label: s.label, note: s.note, issue: s.issue, tool: s.tool, ...(s.color ? { color: s.color } : {}), from: s.id };
   toast(`「${s.label || s.id}」をコピーしました（Ctrl+V で貼り付け）`);
 }
-// 貼ったステップは、選んでいるステップ（なければ写したステップ）の真下の段に置く。どちらもなければ、同じ担当のレーンのいちばん下に置く
-function pasteStep(){
+// 貼ったステップは、選んでいるステップ（なければ写したステップ）の真下の段に置く。どちらもなければ、同じ担当のレーンのいちばん下に置く。
+// 図の座標 p を渡すと（右クリックのメニュー）、そこに置く
+function pasteStep(p){
   if (!clip) return;
   const id = newStepId(), ns = { ...blankStep(id, clip.type, clip.lane), label: clip.label, note: clip.note, issue: clip.issue, tool: clip.tool, ...(clip.color ? { color: clip.color } : {}) };
   const ref = [S.selected, clip.from].find(x => x && S.lastL?.pos.has(x)), P = ref && S.lastL.pos.get(ref);
   const lane = P ? S.lastL.lanes[P.l] : S.lastL?.lanes.find(l => l.id === clip.lane) || S.lastL?.lanes.find(l => !l.ghost);
   S.flow.steps.push(ns);
-  if (lane && !lane.ghost){
+  const sl = p && slotAt(p[1]);
+  if (sl) pinSlot(ns, sl.lane, { ...sl, drop: true }, colAt(p[0]));
+  else if (lane && !lane.ghost){
     const li = S.lastL.lanes.indexOf(lane);
     pinSlot(ns, lane, { lane, t: P ? P.t + 1 : S.lastL.rows.filter(w => w.r === li).length, ins: true, drop: true }, P ? P.c : 0);
   }
@@ -1721,6 +1740,7 @@ document.addEventListener("keydown", e => {
   if (!S.flow || inlineEd || drag || e.target.closest?.("input, textarea, select, [contenteditable], dialog")) return;
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
   if (mod && !e.altKey && (k === "z" || k === "y")){ e.preventDefault(); undo(k === "y" || e.shiftKey); return; }
+  if (mod && !e.altKey && !e.shiftKey && k === "f"){ e.preventDefault(); openFind(); return; }
   // 画面の文字を選んでいるときの Ctrl+C は、ふつうの文字のコピーにする
   if (mod && !e.altKey && !e.shiftKey && k === "c" && S.selected && !S.selEdge && document.getSelection()?.isCollapsed !== false){ e.preventDefault(); copyStep(); return; }
   if (mod && !e.altKey && !e.shiftKey && k === "v" && clip){ e.preventDefault(); pasteStep(); return; }
@@ -1842,9 +1862,21 @@ function renderChecks(){
   const el = $("#tab-check"); if (!S.flow) return;
   if (!S.issues.length){ el.innerHTML = `<div class="ok-box">問題は見つかりませんでした。</div>`; return; }
   const lv = { bad: "要修正", warn: "確認", info: "参考" };
-  el.innerHTML = `<ul class="issues">` + S.issues.map(i => `<li><button class="issue ${i.level}" ${i.step ? `data-goto="${esc(i.step)}"` : ""}><span class="lv">${lv[i.level]}</span><span>${esc(i.msg)}</span></button></li>`).join("") + `</ul>`;
+  // 図に描けないつながり（drop。ないステップへの次・関連など）は、図では選べないので、ここに「外す」ボタンを出す
+  el.innerHTML = `<ul class="issues">` + S.issues.map(i => `<li${i.drop ? ` class="has-drop"` : ""}><button class="issue ${i.level}" ${i.step ? `data-goto="${esc(i.step)}"` : ""}><span class="lv">${lv[i.level]}</span><span>${esc(i.msg)}</span></button>`
+    + (i.drop ? `<button class="btn sm" data-drop="${esc(i.drop.kind)}" data-step="${esc(i.step)}" data-to="${esc(i.drop.to)}" title="この${i.drop.kind === "next" ? "つながり" : "関連"}を YAML から消します">外す</button>` : "") + `</li>`).join("") + `</ul>`;
 }
-$("#tab-check").addEventListener("click", ev => { const b = ev.target.closest("[data-goto]"); if (b) select(b.dataset.goto); });
+// ステップ step の次（next）・関連（related）から、to へのつながりをすべて外す（同じ ID のステップが重複していれば、そのどれからも）
+function dropLink(step, kind, to){
+  const list = S.flow.steps.filter(s => s.id === step); if (!list.length) return;
+  list.forEach(s => { if (kind === "next") s.next = s.next.filter(e => e.to !== to); else if (s.related) s.related = s.related.filter(r => r.to !== to); });
+  commit({ form: true });
+  toast(`「${list[0].label || step}」の${kind === "next" ? "次" : "関連"}から「${to}」を外しました（Ctrl+Z で元に戻せます）`);
+}
+$("#tab-check").addEventListener("click", ev => {
+  const d = ev.target.closest("[data-drop]"); if (d){ dropLink(d.dataset.step, d.dataset.drop, d.dataset.to); return; }
+  const b = ev.target.closest("[data-goto]"); if (b) select(b.dataset.goto);
+});
 function renderHist(){
   const el = $("#tab-hist"); if (!S.currentId) { el.innerHTML = ""; return; }
   const r = S.records.get(S.currentId) || {}, h = r.history || [];
@@ -2159,7 +2191,8 @@ function markdown(f){
   if (f.steps.some(hasTool)) cols.push([TOOL_NAME, s => s.tool]);
   cols.push(["補足", s => s.note], ["課題", s => s.issue]);
   md += "## フロー図\n\n```mermaid\n" + mermaid(f) + "```\n\n## 手順一覧\n\n" + `| ${cols.map(([h]) => h).join(" | ")} |\n|${cols.map(() => "---|").join("")}\n`;
-  f.steps.forEach(s => md += `| ${cols.map(([, v]) => cell(v(s))).join(" | ")} |\n`);
+  // 表は YAML の並びではなく図の順にする（並び順は画面に出さないため）
+  byDiagram(f).forEach(s => md += `| ${cols.map(([, v]) => cell(v(s))).join(" | ")} |\n`);
   if (f.memo.trim()) md += `\n## メモ\n\n${f.memo.trim()}\n`;
   md += "\n## 定義（YAML）\n\nこのブロックを業務フロー帳の「インポート」で取り込むと、編集を再開できます。\n\n```yaml\n" + S.yamlSrc.replace(/\n?$/, "\n") + "```\n";
   return md;
