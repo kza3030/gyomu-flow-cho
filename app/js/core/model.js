@@ -139,9 +139,9 @@ function normStep(s, i){
   const c = colorIn(s.color); if (c) st.color = c;
   st.next = normNext(s.next);
   st.related = normRelated(s.related);
-  // col: 図で左から何列目に置くか（1 始まり）。省くと自動で決める
+  /* col・row：図の位置（左から何列目・レーンの中で上から何段目。1 始まり）。YAML では末尾の layout に書く（layoutIn）。
+     ここで読むのは、以前の版のステップごとの書き方。中身のない列・段は詰めて描く。省くと矢印に合わせて自動で決める */
   if (Number.isInteger(+s.col) && +s.col >= 1) st.col = +s.col;
-  // row: レーンの中で上から何段目に置くか（1 始まり。中身のない段は詰めて描く）。省くと自動で決める
   if (Number.isInteger(+s.row) && +s.row >= 1) st.row = +s.row;
   // from：ToBe のステップが、比較元（AsIs）のどのステップにあたるか。ID が同じなら書かなくてよい（統合・分割・置き換えのときに書く）
   const from = normRelated(s.from).map(r => r.to); if (from.length) st.from = from;
@@ -168,6 +168,7 @@ function normCompare(c){
   if (!c || typeof c !== "object" || Array.isArray(c) || c.base == null || String(c.base).trim() === "") return null;
   const snap = c.snapshot && typeof c.snapshot === "object" ? c.snapshot : {};
   const o = { base: String(c.base).trim(), at: c.at != null ? (c.at instanceof Date ? c.at.toISOString() : String(c.at)) : "", snapshot: { lanes: normLanes(snap.lanes ?? []), steps: normSteps(snap.steps ?? []) } };
+  layoutIn(o.snapshot.steps, snap.layout);
   artifactLinks(o.snapshot);
   return o;
 }
@@ -188,9 +189,25 @@ function normalize(raw){
   if (raw.id != null && String(raw.id).trim()) f.id = String(raw.id).trim();
   const removed = normRemoved(raw.removed); if (removed.length) f.removed = removed;
   const cmp = normCompare(raw.compare); if (cmp) f.compare = cmp;
+  layoutIn(f.steps, raw.layout);
   artifactLinks(f);
   return f;
 }
+/* layout：図の配置。ステップ ID: [左から何列目, レーンの中で上から何段目]（どちらも 1 始まり。段は省ける）。
+   ツールが書く欄で、ここにないステップは矢印に合わせて自動で差し込む。読んだ値はステップの col・row に持つ。
+   以前の版の、ステップごとの col・row も読む（layout にあるステップは layout のほうを使う）。ないステップの ID は読み捨てる */
+function layoutIn(steps, lay){
+  if (!lay || typeof lay !== "object" || Array.isArray(lay)) return;
+  const by = new Map(); steps.forEach(s => { if (!by.has(s.id)) by.set(s.id, s); });
+  Object.entries(lay).forEach(([id, v]) => {
+    const s = by.get(String(id)), [c, r] = Array.isArray(v) ? v : v && typeof v === "object" ? [v.col, v.row] : [v];
+    if (!s || !(Number.isInteger(+c) && +c >= 1)) return;
+    s.col = +c;
+    if (Number.isInteger(+r) && +r >= 1) s.row = +r; else delete s.row;
+  });
+}
+// 位置（col）を持つステップの layout（ステップの並び順）。段（row）がなければ列だけ
+const layoutPlain = steps => steps.filter(s => s.col).map(s => [s.id, s.row ? [s.col, s.row] : s.col]);
 function toPlain(f){
   const o = {};
   if (f.id) o.id = f.id;
@@ -202,16 +219,19 @@ function toPlain(f){
   if (f.removed?.length) o.removed = f.removed.map(r => ({ id: r.id, ...changeOut(r) }));
   // memo：フロー全体についての自由なメモ（図の下の欄）。長くなりやすいので最後に書く
   if (f.memo) o.memo = f.memo;
+  // layout：図の配置はツールが書く欄なので、業務の中身（ここまで）の後ろにまとめる
+  const lay = layoutPlain(f.steps); if (lay.length) o.layout = Object.fromEntries(lay);
   // compare：写し（snapshot）はフロー 1 つ分の長さがあるので、メモよりさらに後ろに書く
-  if (f.compare) o.compare = { base: f.compare.base, ...(f.compare.at ? { at: f.compare.at } : {}), snapshot: { lanes: lanesPlain(f.compare.snapshot.lanes), steps: stepsPlain(f.compare.snapshot.steps) } };
+  if (f.compare){
+    const sn = f.compare.snapshot, sl = layoutPlain(sn.steps);
+    o.compare = { base: f.compare.base, ...(f.compare.at ? { at: f.compare.at } : {}), snapshot: { lanes: lanesPlain(sn.lanes), steps: stepsPlain(sn.steps), ...(sl.length ? { layout: Object.fromEntries(sl) } : {}) } };
+  }
   return o;
 }
 const lanesPlain = lanes => lanes.map(l => ({ id: l.id, name: l.name }));
 function stepsPlain(steps){
   return steps.map(s => {
     const r = { id: s.id, type: s.type, lane: s.lane };
-    if (s.col) r.col = s.col;
-    if (s.row) r.row = s.row;
     if (s.color) r.color = s.color;
     r.label = s.label;
     if (s.note) r.note = s.note;
@@ -230,7 +250,23 @@ function stepsPlain(steps){
     return r;
   });
 }
-const toYaml = f => jsyaml.dump(toPlain(f), { lineWidth: -1, noRefs: true });
+/* YAML の文面。layout は 1 ステップ 1 行（ID: [列, 段]）で、ステップの並び順に書き、何の欄かを LLM や人が読んで分かるよう見出しのコメントを付ける。
+   写し（compare.snapshot）の layout も同じ形で、写しの最後に書く */
+const YAML_OPT = { lineWidth: -1, noRefs: true };
+const LAYOUT_HEAD = "# 図の配置（ツールが書く欄）。ステップ ID: [左から何列目, 担当（レーン）の中で上から何段目]\n"
+  + "# ステップを足す・消す・つなぎ直すときは、ここは書き換えなくてよい（ここにないステップは、矢印に合わせてツールが差し込む）\n";
+const layoutYaml = (lay, ind) => lay.map(([id, v]) => ind + jsyaml.dump({ [id]: v }, { ...YAML_OPT, flowLevel: 1 })).join("");
+function toYaml(f){
+  const { layout: _l, compare, ...o } = toPlain(f), lay = layoutPlain(f.steps);
+  let t = jsyaml.dump(o, YAML_OPT);
+  if (lay.length) t += LAYOUT_HEAD + "layout:\n" + layoutYaml(lay, "  ");
+  if (compare){
+    const { layout: _s, ...snapshot } = compare.snapshot, sl = layoutPlain(f.compare.snapshot.steps);
+    t += jsyaml.dump({ compare: { ...compare, snapshot } }, YAML_OPT);
+    if (sl.length) t += "    layout:\n" + layoutYaml(sl, "      ");
+  }
+  return t;
+}
 function parseYaml(text){ return normalize(jsyaml.load(text)); }
 
 function uid(prefix, taken){ let n = 1; while (taken.has(prefix + n)) n++; return prefix + n; }
